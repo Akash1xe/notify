@@ -1,11 +1,13 @@
 import type { AnalysisJobResponse } from "@/types/api";
 
 export function FrameAnalysisProgress({ job }: { job: AnalysisJobResponse }) {
+  const title = job.job_type === "VISUAL_CHANGE" ? "Comparing visual changes" : "Building frame timeline";
+
   return (
     <section className="rounded-2xl border border-blue-900/60 bg-blue-950/20 p-6" aria-live="polite">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">Building frame timeline</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">{title}</p>
           <p className="mt-2 text-slate-200">{job.message}</p>
         </div>
         <span className="text-sm font-semibold text-slate-300">{Math.round(job.progress)}%</span>
