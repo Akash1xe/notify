@@ -15,6 +15,10 @@ class Settings:
     max_video_height: int
     temp_retention_hours: int
     min_free_space_bytes: int
+    whisper_model: str
+    whisper_language: str
+    whisper_device: str
+    whisper_compute_type: str
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -28,6 +32,10 @@ class Settings:
             max_video_height=int(os.getenv("MAX_VIDEO_HEIGHT", "720")),
             temp_retention_hours=int(os.getenv("TEMP_RETENTION_HOURS", "24")),
             min_free_space_bytes=int(os.getenv("MIN_FREE_SPACE_BYTES", str(512 * 1024 * 1024))),
+            whisper_model=os.getenv("WHISPER_MODEL", "small.en"),
+            whisper_language=os.getenv("WHISPER_LANGUAGE", "en"),
+            whisper_device=os.getenv("WHISPER_DEVICE", "cpu"),
+            whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
         )
 
 
