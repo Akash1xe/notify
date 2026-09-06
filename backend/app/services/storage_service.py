@@ -82,6 +82,21 @@ class StorageService:
     def screenshot_candidates_dir(self, video_id: str) -> Path:
         return self._assert_within(self.analysis_dir(video_id) / "screenshots", self.analysis_dir(video_id))
 
+    def transcript_audio_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "transcript-audio.wav"
+
+    def transcript_segments_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "transcript-segments.jsonl"
+
+    def transcript_summary_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "transcript-summary.json"
+
+    def screenshot_transcript_map_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "screenshot-transcript-map.jsonl"
+
+    def screenshot_transcript_map_summary_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "screenshot-transcript-map-summary.json"
+
     def job_dir(self, job_id: str) -> Path:
         self.validate_job_id(job_id)
         return self._assert_within(self.temp_dir / job_id, self.temp_dir)
@@ -267,7 +282,11 @@ class StorageService:
             job = self.read_job(item.name)
             if job and job.status.transient:
                 job.status = JobStatus.INTERRUPTED
-                if job.job_type == JobType.SCREENSHOT_CANDIDATE:
+                if job.job_type == JobType.TRANSCRIPTION:
+                    job.message = "Transcript generation was interrupted before completion."
+                    job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
+                    job.error_message = "Transcript generation was interrupted. Start it again."
+                elif job.job_type == JobType.SCREENSHOT_CANDIDATE:
                     job.message = "Screenshot candidate extraction was interrupted before completion."
                     job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
                     job.error_message = "Screenshot extraction was interrupted. Start it again."
