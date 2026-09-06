@@ -7,12 +7,13 @@ export type JobStatus =
   | "SCANNING_FRAMES"
   | "COMPARING_FRAMES"
   | "DETECTING_STATES"
+  | "EXTRACTING_SCREENSHOTS"
   | "READY"
   | "FAILED"
   | "INTERRUPTED"
   | "CANCELLED";
 
-export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE";
+export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE" | "SCREENSHOT_CANDIDATE";
 
 export interface ApiErrorShape {
   error: {
@@ -90,6 +91,14 @@ export interface StartTeachingStateAnalysisResponse {
   message: string;
 }
 
+export interface StartScreenshotCandidateAnalysisResponse {
+  job_id: string;
+  video_id: string;
+  status: JobStatus;
+  reused_existing: boolean;
+  message: string;
+}
+
 export interface AnalysisJobResponse extends JobResponse {
   job_type: JobType;
 }
@@ -159,6 +168,24 @@ export interface TeachingStateSummary {
 export interface TeachingStateResponse {
   status: "ready";
   states: TeachingStateSummary;
+}
+
+export interface ScreenshotCandidateSummary {
+  video_id: string;
+  status: string;
+  source_checkpoint_count: number;
+  kept_candidate_count: number;
+  duplicate_candidate_count: number;
+  protected_kept_count: number;
+  deduplication_conservative: boolean;
+  filter_config: Record<string, number>;
+  generated_at: string;
+  states_generated_at: string;
+}
+
+export interface ScreenshotCandidateResponse {
+  status: "ready";
+  candidates: ScreenshotCandidateSummary;
 }
 
 export interface PreparedStatusResponse {
