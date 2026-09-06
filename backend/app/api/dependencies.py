@@ -1,5 +1,7 @@
 from fastapi import Request
 
+from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
+from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
 from app.services.prepared_video_service import PreparedVideoService
@@ -25,3 +27,11 @@ def prepared_video_service(request: Request) -> PreparedVideoService:
 
 def job_manager(request: Request) -> JobManager:
     return request.app.state.jobs
+
+
+def frame_timeline_service(request: Request) -> FrameTimelineService:
+    return request.app.state.frame_timeline
+
+
+def frame_analysis_job_manager(request: Request) -> FrameAnalysisJobManager:
+    return request.app.state.analysis_jobs
