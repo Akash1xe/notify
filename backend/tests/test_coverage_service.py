@@ -39,11 +39,7 @@ class FakeOcr:
         self.content_generated_at = content_generated_at
 
     def get_result(self, _video_id: str):
-        return {
-            "ocr": {"generated_at": self.ocr_generated_at},
-            "content": {"generated_at": self.content_generated_at},
-            "topics": [],
-        }
+        return {"ocr": {"generated_at": self.ocr_generated_at}, "content": {"generated_at": self.content_generated_at}, "topics": []}
 
 
 def write_jsonl(path, records):
@@ -60,32 +56,27 @@ def seed_inputs(storage: StorageService, video_id: str, *, strong_gap=False, unc
         {"previous_frame_index": 4, "frame_index": 5, "previous_timestamp_seconds": 69.9, "timestamp_seconds": 70.0, "kind": "NONE", "change_score": 0.1},
     ]
     write_jsonl(storage.frame_differences_path(video_id), changes)
-
     states = [
         {"checkpoint_index": 0, "frame_index": 100, "timestamp_seconds": 10.0},
         *([{"checkpoint_index": 1, "frame_index": 350, "timestamp_seconds": 35.0}] if strong_gap else []),
         {"checkpoint_index": 2 if strong_gap else 1, "frame_index": 600, "timestamp_seconds": 60.0},
     ]
     write_jsonl(storage.teaching_states_path(video_id), states)
-
     candidates = [
-        {"candidate_index": 0, "frame_index": 100, "timestamp_seconds": 10.0, "protected": False, "content_loss_risk": False},
-        {"candidate_index": 1, "frame_index": 600, "timestamp_seconds": 60.0, "protected": False, "content_loss_risk": False},
+        {"candidate_index": 0, "checkpoint_index": 0, "frame_index": 100, "timestamp_seconds": 10.0, "protected": False, "content_loss_risk": False},
+        {"candidate_index": 1, "checkpoint_index": 2 if strong_gap else 1, "frame_index": 600, "timestamp_seconds": 60.0, "protected": False, "content_loss_risk": False},
     ]
     write_jsonl(storage.screenshot_candidates_path(video_id), candidates)
-
     trusted = [
         {"trusted_index": 0, "candidate_index": 0, "frame_index": 100, "timestamp_seconds": 10.0, "image_filename": "trusted-000000.jpg"},
         {"trusted_index": 1, "candidate_index": 1, "frame_index": 600, "timestamp_seconds": 60.0, "image_filename": "trusted-000001.jpg"},
     ]
     write_jsonl(storage.analysis_dir(video_id) / "trusted-screenshots.jsonl", trusted)
-
     transcript = [
         {"segment_index": 0, "start_seconds": 5.0, "end_seconds": 14.0, "text": "Binary search starts with low and high boundaries."},
         {"segment_index": 1, "start_seconds": 48.0, "end_seconds": 58.0, "text": "Now we discuss logarithmic complexity."},
     ]
     write_jsonl(storage.transcript_segments_path(video_id), transcript)
-
     ocr = [
         {"trusted_index": 0, "has_text": not uncertain_ocr, "low_confidence": False, "mean_confidence": 88.0 if not uncertain_ocr else 0.0, "word_count": 5 if not uncertain_ocr else 0},
         {"trusted_index": 1, "has_text": True, "low_confidence": uncertain_ocr, "mean_confidence": 45.0 if uncertain_ocr else 91.0, "word_count": 4},
@@ -100,47 +91,42 @@ def make_service(tmp_path, *, topics=None):
     review = FakeReview()
     topic_service = FakeTopics(topics=topics)
     ocr = FakeOcr()
-    service = CoverageService(storage, review, topic_service, ocr, visual)
-    return storage, service, visual, review, topic_service, ocr
+    return storage, CoverageService(storage, review, topic_service, ocr, visual), visual, review, topic_service, ocr
 
 
 def test_clean_lecture_passes_coverage_gate(tmp_path):
     storage, service, *_ = make_service(tmp_path)
     video_id = "abcdefghijk"
     seed_inputs(storage, video_id)
-
     result = service.process(video_id, lambda _progress, _message: None)
-
     assert result["summary"]["coverage_passed"] is True
     assert result["summary"]["ready_for_pdf"] is True
+    assert result["summary"]["pdf_gate_status"] == "READY"
     assert result["summary"]["blocking_finding_count"] == 0
     assert service.get_result(video_id) is not None
 
 
-def test_uncaptured_scene_and_stable_state_block_pdf_readiness(tmp_path):
+def test_uncaptured_scene_and_unique_stable_state_block_pdf_readiness(tmp_path):
     storage, service, *_ = make_service(tmp_path)
     video_id = "abcdefghijk"
     seed_inputs(storage, video_id, strong_gap=True)
-
     result = service.process(video_id, lambda _progress, _message: None)
-
     assert result["summary"]["coverage_passed"] is False
-    assert result["summary"]["blocking_finding_count"] >= 1
+    assert result["summary"]["hard_blocking_finding_count"] >= 1
     assert any("UNCAPTURED_STRONG_VISUAL_CHANGE" in item["reasons"] for item in result["findings"])
-    assert any("STABLE_STATE_NOT_IN_TRUSTED_SET" in item["reasons"] for item in result["findings"])
+    assert any("UNREPRESENTED_STABLE_STATE" in item["reasons"] for item in result["findings"])
+    assert any(item["disposition"] == "BLOCK" for item in result["findings"])
 
 
 def test_ocr_uncertainty_is_warning_not_deletion_or_blocker(tmp_path):
     storage, service, *_ = make_service(tmp_path)
     video_id = "abcdefghijk"
     seed_inputs(storage, video_id, uncertain_ocr=True)
-
     result = service.process(video_id, lambda _progress, _message: None)
-
     assert result["summary"]["coverage_passed"] is True
     assert result["summary"]["warning_count"] == 2
     assert all(item["blocking"] is False for item in result["findings"])
-    assert {item["reasons"][0] for item in result["findings"]} == {"OCR_NO_TEXT", "OCR_LOW_CONFIDENCE"}
+    assert all(item["disposition"] == "WARNING" for item in result["findings"])
 
 
 def test_topic_without_screenshot_blocks_coverage(tmp_path):
@@ -151,9 +137,7 @@ def test_topic_without_screenshot_blocks_coverage(tmp_path):
     storage, service, *_ = make_service(tmp_path, topics=topics)
     video_id = "abcdefghijk"
     seed_inputs(storage, video_id)
-
     result = service.process(video_id, lambda _progress, _message: None)
-
     assert result["summary"]["coverage_passed"] is False
     assert any(item["reasons"] == ["TOPIC_WITHOUT_TRUSTED_SCREENSHOT"] for item in result["findings"])
 
@@ -164,6 +148,5 @@ def test_upstream_change_invalidates_cached_coverage(tmp_path):
     seed_inputs(storage, video_id)
     service.process(video_id, lambda _progress, _message: None)
     assert service.get_result(video_id) is not None
-
     visual.generated_at = "changes-v2"
     assert service.get_result(video_id) is None
