@@ -77,6 +77,18 @@ class StartTopicDetectionResponse(BaseModel):
     message: str
 
 
+class StartOcrEnrichmentRequest(BaseModel):
+    video_id: str
+
+
+class StartOcrEnrichmentResponse(BaseModel):
+    job_id: str
+    video_id: str
+    status: JobStatus
+    reused_existing: bool
+    message: str
+
+
 class AnalysisJobError(BaseModel):
     code: str
     message: str
@@ -307,3 +319,57 @@ class LectureTopicResultResponse(BaseModel):
     status: str = "ready"
     summary: LectureTopicSummary
     topics: list[LectureTopic]
+
+
+class OcrSummary(BaseModel):
+    video_id: str
+    status: str
+    pipeline_version: int
+    engine: str
+    engine_version: str
+    language: str
+    psm: int
+    trusted_screenshot_count: int
+    processed_screenshot_count: int
+    text_detected_count: int
+    no_text_count: int
+    low_confidence_count: int
+    total_word_count: int
+    average_confidence: float
+    coverage_complete: bool
+    trusted_generated_at: str
+    generated_at: str
+
+
+class ScreenshotContentSummary(BaseModel):
+    video_id: str
+    status: str
+    pipeline_version: int
+    topic_count: int
+    trusted_screenshot_count: int
+    enriched_screenshot_count: int
+    screenshots_with_visible_text: int
+    screenshots_without_visible_text: int
+    screenshots_with_low_confidence_text: int
+    coverage_complete: bool
+    ocr_generated_at: str
+    topics_generated_at: str
+    alignment_generated_at: str
+    trusted_generated_at: str
+    generated_at: str
+
+
+class TopicContentSummary(BaseModel):
+    topic_index: int
+    title: str
+    screenshot_count: int
+    screenshots_with_ocr_text: int
+    ocr_word_count: int
+    visual_keywords: list[str]
+
+
+class OcrResultResponse(BaseModel):
+    status: str = "ready"
+    ocr: OcrSummary
+    content: ScreenshotContentSummary
+    topics: list[TopicContentSummary]
