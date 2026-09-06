@@ -21,6 +21,8 @@ from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.storage_service import StorageService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
+from app.services.transcription_job_manager import TranscriptionJobManager
+from app.services.transcription_service import TranscriptionService
 from app.services.video_download_service import VideoDownloadService
 from app.services.visual_change_job_manager import VisualChangeJobManager
 from app.services.visual_change_service import VisualChangeService
@@ -60,6 +62,17 @@ async def lifespan(app: FastAPI):
     screenshot_candidates = ScreenshotCandidateService(storage=storage, prepared=prepared, states=teaching_states)
     screenshot_candidate_jobs = ScreenshotCandidateJobManager(storage=storage, candidates=screenshot_candidates)
     candidate_review = CandidateReviewService(storage=storage, prepared=prepared, candidates=screenshot_candidates)
+    transcription = TranscriptionService(
+        storage=storage,
+        prepared=prepared,
+        media=media,
+        review=candidate_review,
+        model_name=settings.whisper_model,
+        language=settings.whisper_language,
+        device=settings.whisper_device,
+        compute_type=settings.whisper_compute_type,
+    )
+    transcription_jobs = TranscriptionJobManager(storage=storage, transcription=transcription)
 
     app.state.storage = storage
     app.state.media = media
@@ -76,12 +89,20 @@ async def lifespan(app: FastAPI):
     app.state.screenshot_candidates = screenshot_candidates
     app.state.screenshot_candidate_jobs = screenshot_candidate_jobs
     app.state.candidate_review = candidate_review
+    app.state.transcription = transcription
+    app.state.transcription_jobs = transcription_jobs
 
-    logger.info("Notify backend ready. ffmpeg=%s ffprobe=%s recovered_jobs=%s", bool(media.ffmpeg_path), bool(media.ffprobe_path), recovered)
+    logger.info(
+        "Notify backend ready. ffmpeg=%s ffprobe=%s whisper_model=%s recovered_jobs=%s",
+        bool(media.ffmpeg_path),
+        bool(media.ffprobe_path),
+        settings.whisper_model,
+        recovered,
+    )
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="0.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
