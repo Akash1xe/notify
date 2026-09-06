@@ -1,48 +1,29 @@
-export type CoverageJobStatus =
-  | "QUEUED"
-  | "VERIFYING_COVERAGE"
-  | "READY"
-  | "FAILED"
-  | "INTERRUPTED"
-  | "CANCELLED";
+export type CoverageDisposition = "BLOCK" | "REVIEW" | "WARNING";
 
-export interface StartCoverageAuditResponse {
-  job_id: string;
-  video_id: string;
-  status: CoverageJobStatus;
-  reused_existing: boolean;
-  message: string;
-}
-
-export interface CoverageJobResponse {
-  job_id: string;
-  video_id: string;
-  job_type: "COVERAGE_AUDIT";
-  status: CoverageJobStatus;
-  progress: number;
-  message: string;
-  error: { code: string; message: string } | null;
-}
-
-export interface CoverageFinding {
+export type CoverageFinding = {
   finding_index: number;
-  severity: "HIGH" | "MEDIUM" | "WARNING" | string;
+  severity: string;
+  disposition: CoverageDisposition;
   blocking: boolean;
   start_seconds: number;
   end_seconds: number;
   reasons: string[];
   evidence: Record<string, unknown>;
   rechecked: boolean;
-}
+};
 
-export interface CoverageSummary {
+export type CoverageSummary = {
   video_id: string;
   status: string;
   pipeline_version: number;
   coverage_passed: boolean;
   ready_for_pdf: boolean;
+  pdf_gate_status: "READY" | "REVIEW_REQUIRED" | "BLOCKED";
   finding_count: number;
   blocking_finding_count: number;
+  hard_blocking_finding_count: number;
+  review_required_count: number;
+  review_finding_count: number;
   high_severity_count: number;
   medium_severity_count: number;
   warning_count: number;
@@ -54,10 +35,28 @@ export interface CoverageSummary {
   audit_config: Record<string, number>;
   source_versions: Record<string, string | null>;
   generated_at: string;
-}
+};
 
-export interface CoverageResultResponse {
+export type CoverageResultResponse = {
   status: "ready";
   summary: CoverageSummary;
   findings: CoverageFinding[];
-}
+};
+
+export type StartCoverageAuditResponse = {
+  job_id: string;
+  video_id: string;
+  status: string;
+  reused_existing: boolean;
+  message: string;
+};
+
+export type CoverageJobResponse = {
+  job_id: string;
+  video_id: string;
+  job_type: string;
+  status: string;
+  progress: number;
+  message: string;
+  error: { code: string; message: string } | null;
+};
