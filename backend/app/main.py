@@ -21,6 +21,8 @@ from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.storage_service import StorageService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
+from app.services.topic_detection_job_manager import TopicDetectionJobManager
+from app.services.topic_detection_service import TopicDetectionService
 from app.services.transcription_job_manager import TranscriptionJobManager
 from app.services.transcription_service import TranscriptionService
 from app.services.video_download_service import VideoDownloadService
@@ -73,6 +75,8 @@ async def lifespan(app: FastAPI):
         compute_type=settings.whisper_compute_type,
     )
     transcription_jobs = TranscriptionJobManager(storage=storage, transcription=transcription)
+    topic_detection = TopicDetectionService(storage=storage, transcription=transcription, review=candidate_review)
+    topic_detection_jobs = TopicDetectionJobManager(storage=storage, topics=topic_detection)
 
     app.state.storage = storage
     app.state.media = media
@@ -91,6 +95,8 @@ async def lifespan(app: FastAPI):
     app.state.candidate_review = candidate_review
     app.state.transcription = transcription
     app.state.transcription_jobs = transcription_jobs
+    app.state.topic_detection = topic_detection
+    app.state.topic_detection_jobs = topic_detection_jobs
 
     logger.info(
         "Notify backend ready. ffmpeg=%s ffprobe=%s whisper_model=%s recovered_jobs=%s",
@@ -102,7 +108,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="0.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
