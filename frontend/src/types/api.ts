@@ -5,12 +5,13 @@ export type JobStatus =
   | "VERIFYING"
   | "FINALIZING"
   | "SCANNING_FRAMES"
+  | "COMPARING_FRAMES"
   | "READY"
   | "FAILED"
   | "INTERRUPTED"
   | "CANCELLED";
 
-export type JobType = "PREPARATION" | "FRAME_TIMELINE";
+export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE";
 
 export interface ApiErrorShape {
   error: {
@@ -72,6 +73,14 @@ export interface StartFrameAnalysisResponse {
   message: string;
 }
 
+export interface StartVisualChangeAnalysisResponse {
+  job_id: string;
+  video_id: string;
+  status: JobStatus;
+  reused_existing: boolean;
+  message: string;
+}
+
 export interface AnalysisJobResponse extends JobResponse {
   job_type: JobType;
 }
@@ -92,6 +101,31 @@ export interface FrameTimelineSummary {
 export interface FrameTimelineResponse {
   status: "ready";
   timeline: FrameTimelineSummary;
+}
+
+export interface VisualChangeSummary {
+  video_id: string;
+  status: string;
+  compared_frame_count: number;
+  compared_pair_count: number;
+  no_change_count: number;
+  local_change_count: number;
+  structural_change_count: number;
+  scene_change_count: number;
+  change_pair_count: number;
+  average_change_score: number;
+  max_change_score: number;
+  max_change_frame_index: number | null;
+  coverage_complete: boolean;
+  compared_every_consecutive_pair: boolean;
+  detector_config: Record<string, number>;
+  generated_at: string;
+  timeline_generated_at: string;
+}
+
+export interface VisualChangeResponse {
+  status: "ready";
+  changes: VisualChangeSummary;
 }
 
 export interface PreparedStatusResponse {
