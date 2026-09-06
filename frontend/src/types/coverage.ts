@@ -26,7 +26,7 @@ export interface CoverageJobResponse {
 
 export interface CoverageFinding {
   finding_index: number;
-  severity: "HIGH" | "MEDIUM" | "WARNING" | string;
+  severity: "HIGH" | "MEDIUM" | "REVIEW" | "WARNING" | string;
   blocking: boolean;
   start_seconds: number;
   end_seconds: number;
@@ -41,8 +41,10 @@ export interface CoverageSummary {
   pipeline_version: number;
   coverage_passed: boolean;
   ready_for_pdf: boolean;
+  pdf_status?: "READY" | "REVIEW" | "BLOCKED" | string;
   finding_count: number;
   blocking_finding_count: number;
+  review_finding_count: number;
   high_severity_count: number;
   medium_severity_count: number;
   warning_count: number;
