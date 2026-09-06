@@ -6,6 +6,8 @@ from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
 from app.services.prepared_video_service import PreparedVideoService
 from app.services.storage_service import StorageService
+from app.services.teaching_state_job_manager import TeachingStateJobManager
+from app.services.teaching_state_service import TeachingStateService
 from app.services.visual_change_job_manager import VisualChangeJobManager
 from app.services.visual_change_service import VisualChangeService
 from app.services.youtube_service import YoutubeService
@@ -45,3 +47,11 @@ def visual_change_service(request: Request) -> VisualChangeService:
 
 def visual_change_job_manager(request: Request) -> VisualChangeJobManager:
     return request.app.state.visual_change_jobs
+
+
+def teaching_state_service(request: Request) -> TeachingStateService:
+    return request.app.state.teaching_states
+
+
+def teaching_state_job_manager(request: Request) -> TeachingStateJobManager:
+    return request.app.state.teaching_state_jobs
