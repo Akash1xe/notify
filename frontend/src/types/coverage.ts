@@ -43,10 +43,20 @@ export type CoverageResultResponse = {
   findings: CoverageFinding[];
 };
 
-export type StartCoverageResponse = {
+export type StartCoverageAuditResponse = {
   job_id: string;
   video_id: string;
   status: string;
   reused_existing: boolean;
   message: string;
+};
+
+export type CoverageJobResponse = {
+  job_id: string;
+  video_id: string;
+  job_type: string;
+  status: string;
+  progress: number;
+  message: string;
+  error: { code: string; message: string } | null;
 };
