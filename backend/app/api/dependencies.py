@@ -5,6 +5,8 @@ from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
 from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
+from app.services.ocr_job_manager import OcrJobManager
+from app.services.ocr_service import OcrService
 from app.services.prepared_video_service import PreparedVideoService
 from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJobManager
 from app.services.screenshot_candidate_service import ScreenshotCandidateService
@@ -90,3 +92,11 @@ def topic_detection_service(request: Request) -> TopicDetectionService:
 
 def topic_detection_job_manager(request: Request) -> TopicDetectionJobManager:
     return request.app.state.topic_detection_jobs
+
+
+def ocr_service(request: Request) -> OcrService:
+    return request.app.state.ocr
+
+
+def ocr_job_manager(request: Request) -> OcrJobManager:
+    return request.app.state.ocr_jobs
