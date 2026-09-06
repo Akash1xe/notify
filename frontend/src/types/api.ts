@@ -4,10 +4,13 @@ export type JobStatus =
   | "MERGING"
   | "VERIFYING"
   | "FINALIZING"
+  | "SCANNING_FRAMES"
   | "READY"
   | "FAILED"
   | "INTERRUPTED"
   | "CANCELLED";
+
+export type JobType = "PREPARATION" | "FRAME_TIMELINE";
 
 export interface ApiErrorShape {
   error: {
@@ -59,6 +62,36 @@ export interface JobResponse {
   progress: number;
   message: string;
   error: JobError | null;
+}
+
+export interface StartFrameAnalysisResponse {
+  job_id: string;
+  video_id: string;
+  status: JobStatus;
+  reused_existing: boolean;
+  message: string;
+}
+
+export interface AnalysisJobResponse extends JobResponse {
+  job_type: JobType;
+}
+
+export interface FrameTimelineSummary {
+  video_id: string;
+  status: string;
+  frame_count: number;
+  fps: number;
+  width: number;
+  height: number;
+  duration_seconds: number;
+  first_timestamp_seconds: number;
+  last_timestamp_seconds: number;
+  generated_at: string;
+}
+
+export interface FrameTimelineResponse {
+  status: "ready";
+  timeline: FrameTimelineSummary;
 }
 
 export interface PreparedStatusResponse {
