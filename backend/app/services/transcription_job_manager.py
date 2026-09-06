@@ -19,6 +19,8 @@ class TranscriptionJobManager:
         self._jobs: dict[str, JobRecord] = {}
         self._active_by_video: dict[str, str] = {}
         self._lock = threading.RLock()
+        if not hasattr(self.transcription, "_raw_process_lock"):
+            setattr(self.transcription, "_raw_process_lock", threading.RLock())
 
     def _new_job(self, video_id: str, status: JobStatus, progress: float, message: str) -> JobRecord:
         now = utc_now_iso()
@@ -80,15 +82,18 @@ class TranscriptionJobManager:
     def _run(self, job_id: str) -> None:
         job = self._jobs[job_id]
         try:
-            self.transcription.process(
-                job.video_id,
-                lambda stage, progress, message: self._update(
-                    job_id,
-                    self._status_for_stage(stage),
-                    progress,
-                    message,
-                ),
-            )
+            process_lock = getattr(self.transcription, "_raw_process_lock")
+            self._update(job_id, JobStatus.TRANSCRIBING, 0.0, "Waiting for/reusing any transcript prewarm already in progress...")
+            with process_lock:
+                self.transcription.process(
+                    job.video_id,
+                    lambda stage, progress, message: self._update(
+                        job_id,
+                        self._status_for_stage(stage),
+                        progress,
+                        message,
+                    ),
+                )
             self._update(job_id, JobStatus.READY, 100.0, "Timestamped transcript and screenshot alignment are ready.")
             self.storage.cleanup_job_workspace(job_id)
         except AppError as exc:
