@@ -22,6 +22,7 @@ class StartCoverageAuditResponse(BaseModel):
 class CoverageFinding(BaseModel):
     finding_index: int
     severity: str
+    disposition: str = "WARNING"
     blocking: bool
     start_seconds: float
     end_seconds: float
@@ -36,8 +37,12 @@ class CoverageSummary(BaseModel):
     pipeline_version: int
     coverage_passed: bool
     ready_for_pdf: bool
+    pdf_gate_status: str = "READY"
     finding_count: int
     blocking_finding_count: int
+    hard_blocking_finding_count: int = 0
+    review_required_count: int = 0
+    review_finding_count: int = 0
     high_severity_count: int
     medium_severity_count: int
     warning_count: int
