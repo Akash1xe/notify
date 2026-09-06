@@ -22,6 +22,8 @@ class VisualChangeJobManager:
         self._active_by_video: dict[str, str] = {}
         self._transcript_prewarm_active: set[str] = set()
         self._lock = threading.RLock()
+        if self.transcription is not None and not hasattr(self.transcription, "_raw_process_lock"):
+            setattr(self.transcription, "_raw_process_lock", threading.RLock())
 
     def _new_job(self, video_id: str, status: JobStatus, progress: float, message: str) -> JobRecord:
         now = utc_now_iso()
@@ -55,18 +57,22 @@ class VisualChangeJobManager:
         with self._lock:
             if video_id in self._transcript_prewarm_active:
                 return
-            # Raw transcript validity intentionally does not depend on trusted screenshots.
             if self.transcription._valid_transcript_summary(video_id) is not None:
                 return
             self._transcript_prewarm_active.add(video_id)
 
         def run() -> None:
             try:
-                logger.info("Prewarming raw transcript while adaptive visual analysis runs for %s", video_id)
-                self.transcription._transcribe(video_id, lambda _stage, _progress, _message: None)
+                process_lock = getattr(self.transcription, "_raw_process_lock")
+                with process_lock:
+                    # Recheck after acquiring the shared lock: a normal transcript job
+                    # may have completed while this prewarm was waiting.
+                    if self.transcription._valid_transcript_summary(video_id) is None:
+                        logger.info("Prewarming raw transcript while adaptive visual analysis runs for %s", video_id)
+                        self.transcription._transcribe(video_id, lambda _stage, _progress, _message: None)
             except AppError as exc:
                 # Visual analysis remains independent. The normal transcript job can retry
-                # and surface the error later if model/audio setup is unavailable.
+                # and surface setup/model errors later.
                 logger.warning("Transcript prewarm skipped/failed for %s: %s", video_id, exc.code)
             except Exception:
                 logger.exception("Transcript prewarm failed unexpectedly for %s", video_id)
