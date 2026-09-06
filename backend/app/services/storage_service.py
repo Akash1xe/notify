@@ -61,6 +61,12 @@ class StorageService:
     def frame_timeline_summary_path(self, video_id: str) -> Path:
         return self.analysis_dir(video_id) / "frame-timeline-summary.json"
 
+    def frame_differences_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "frame-differences.jsonl"
+
+    def frame_differences_summary_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "frame-differences-summary.json"
+
     def job_dir(self, job_id: str) -> Path:
         self.validate_job_id(job_id)
         return self._assert_within(self.temp_dir / job_id, self.temp_dir)
@@ -141,6 +147,22 @@ class StorageService:
         except (OSError, json.JSONDecodeError):
             return None
 
+    def write_frame_differences_summary(self, video_id: str, summary: dict[str, Any]) -> None:
+        self._atomic_json_write(self.frame_differences_summary_path(video_id), summary)
+
+    def read_frame_differences_summary(self, video_id: str) -> dict[str, Any] | None:
+        path = self.frame_differences_summary_path(video_id)
+        if not path.exists():
+            return None
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if not isinstance(payload, dict) or payload.get("video_id") != video_id:
+                return None
+            return payload
+        except (OSError, json.JSONDecodeError):
+            return None
+
     def finalize_video(self, job_id: str, video_id: str, source: Path, metadata: dict[str, Any]) -> Path:
         source = self._assert_within(source, self.job_dir(job_id))
         final_dir = self.video_dir(video_id)
@@ -198,7 +220,11 @@ class StorageService:
             job = self.read_job(item.name)
             if job and job.status.transient:
                 job.status = JobStatus.INTERRUPTED
-                if job.job_type == JobType.FRAME_TIMELINE:
+                if job.job_type == JobType.VISUAL_CHANGE:
+                    job.message = "Visual change analysis was interrupted before completion."
+                    job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
+                    job.error_message = "Visual change analysis was interrupted. Start it again."
+                elif job.job_type == JobType.FRAME_TIMELINE:
                     job.message = "Frame timeline analysis was interrupted before completion."
                     job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
                     job.error_message = "Frame analysis was interrupted. Start the analysis again."
