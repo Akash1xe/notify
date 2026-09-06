@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass
+class AppError(Exception):
+    code: str
+    message: str
+    status_code: int = 400
+
+    def __str__(self) -> str:
+        return self.message
+
+
+class ErrorCode:
+    INVALID_YOUTUBE_URL = "INVALID_YOUTUBE_URL"
+    VIDEO_UNAVAILABLE = "VIDEO_UNAVAILABLE"
+    VIDEO_PRIVATE = "VIDEO_PRIVATE"
+    LIVE_VIDEO_UNSUPPORTED = "LIVE_VIDEO_UNSUPPORTED"
+    FFMPEG_NOT_FOUND = "FFMPEG_NOT_FOUND"
+    DOWNLOAD_FAILED = "DOWNLOAD_FAILED"
+    MEDIA_MERGE_FAILED = "MEDIA_MERGE_FAILED"
+    MEDIA_VERIFICATION_FAILED = "MEDIA_VERIFICATION_FAILED"
+    INSUFFICIENT_DISK_SPACE = "INSUFFICIENT_DISK_SPACE"
+    JOB_NOT_FOUND = "JOB_NOT_FOUND"
+    PREPARATION_INTERRUPTED = "PREPARATION_INTERRUPTED"
+    STORAGE_ERROR = "STORAGE_ERROR"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
