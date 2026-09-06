@@ -11,12 +11,13 @@ export type JobStatus =
   | "EXTRACTING_AUDIO"
   | "TRANSCRIBING"
   | "ALIGNING_TRANSCRIPT"
+  | "DETECTING_TOPICS"
   | "READY"
   | "FAILED"
   | "INTERRUPTED"
   | "CANCELLED";
 
-export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE" | "SCREENSHOT_CANDIDATE" | "TRANSCRIPTION";
+export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE" | "SCREENSHOT_CANDIDATE" | "TRANSCRIPTION" | "TOPIC_DETECTION";
 
 export interface ApiErrorShape { error: { code: string; message: string } }
 export interface ValidationResponse { status: "valid"; video_id: string; normalized_url: string }
@@ -30,6 +31,7 @@ export interface StartVisualChangeAnalysisResponse { job_id: string; video_id: s
 export interface StartTeachingStateAnalysisResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface StartScreenshotCandidateAnalysisResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface StartTranscriptionResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
+export interface StartTopicDetectionResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface AnalysisJobResponse extends JobResponse { job_type: JobType }
 
 export interface FrameTimelineSummary { video_id: string; status: string; frame_count: number; fps: number; width: number; height: number; duration_seconds: number; first_timestamp_seconds: number; last_timestamp_seconds: number; generated_at: string }
@@ -127,6 +129,45 @@ export interface TranscriptResultResponse {
   transcript: TranscriptSummary;
   alignment: ScreenshotTranscriptAlignmentSummary;
 }
+
+export interface LectureTopic {
+  topic_index: number;
+  title: string;
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+  segment_start_index: number | null;
+  segment_end_index: number | null;
+  segment_count: number;
+  word_count: number;
+  keywords: string[];
+  boundary_reasons: string[];
+  trusted_screenshot_indexes: number[];
+  candidate_indexes: number[];
+  screenshot_count: number;
+}
+
+export interface LectureTopicSummary {
+  video_id: string;
+  status: string;
+  pipeline_version: number;
+  topic_count: number;
+  transcript_segment_count: number;
+  trusted_screenshot_count: number;
+  assigned_screenshot_count: number;
+  unassigned_screenshot_count: number;
+  coverage_complete: boolean;
+  min_topic_duration_seconds: number;
+  max_topic_duration_seconds: number;
+  boundary_candidate_count: number;
+  accepted_boundary_count: number;
+  transcript_generated_at: string;
+  alignment_generated_at: string;
+  trusted_generated_at: string;
+  generated_at: string;
+}
+
+export interface LectureTopicResultResponse { status: "ready"; summary: LectureTopicSummary; topics: LectureTopic[] }
 
 export interface PreparedStatusResponse { video_id: string; status: "READY" | "NOT_PREPARED"; prepared: boolean; message: string; resolution?: string | null; duration_seconds?: number | null }
 export interface StorageStatus { prepared_video_count: number; downloads_size_bytes: number; temp_size_bytes: number; output_size_bytes: number; free_space_bytes: number }
