@@ -12,12 +12,14 @@ export type JobStatus =
   | "TRANSCRIBING"
   | "ALIGNING_TRANSCRIPT"
   | "DETECTING_TOPICS"
+  | "EXTRACTING_TEXT"
+  | "ENRICHING_CONTENT"
   | "READY"
   | "FAILED"
   | "INTERRUPTED"
   | "CANCELLED";
 
-export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE" | "SCREENSHOT_CANDIDATE" | "TRANSCRIPTION" | "TOPIC_DETECTION";
+export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE" | "SCREENSHOT_CANDIDATE" | "TRANSCRIPTION" | "TOPIC_DETECTION" | "OCR_ENRICHMENT";
 
 export interface ApiErrorShape { error: { code: string; message: string } }
 export interface ValidationResponse { status: "valid"; video_id: string; normalized_url: string }
@@ -32,6 +34,7 @@ export interface StartTeachingStateAnalysisResponse { job_id: string; video_id: 
 export interface StartScreenshotCandidateAnalysisResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface StartTranscriptionResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface StartTopicDetectionResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
+export interface StartOcrEnrichmentResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface AnalysisJobResponse extends JobResponse { job_type: JobType }
 
 export interface FrameTimelineSummary { video_id: string; status: string; frame_count: number; fps: number; width: number; height: number; duration_seconds: number; first_timestamp_seconds: number; last_timestamp_seconds: number; generated_at: string }
@@ -169,7 +172,61 @@ export interface LectureTopicSummary {
 
 export interface LectureTopicResultResponse { status: "ready"; summary: LectureTopicSummary; topics: LectureTopic[] }
 
+export interface OcrSummary {
+  video_id: string;
+  status: string;
+  pipeline_version: number;
+  engine: string;
+  engine_version: string;
+  language: string;
+  psm: number;
+  trusted_screenshot_count: number;
+  processed_screenshot_count: number;
+  text_detected_count: number;
+  no_text_count: number;
+  low_confidence_count: number;
+  total_word_count: number;
+  average_confidence: number;
+  coverage_complete: boolean;
+  trusted_generated_at: string;
+  generated_at: string;
+}
+
+export interface ScreenshotContentSummary {
+  video_id: string;
+  status: string;
+  pipeline_version: number;
+  topic_count: number;
+  trusted_screenshot_count: number;
+  enriched_screenshot_count: number;
+  screenshots_with_visible_text: number;
+  screenshots_without_visible_text: number;
+  screenshots_with_low_confidence_text: number;
+  coverage_complete: boolean;
+  ocr_generated_at: string;
+  topics_generated_at: string;
+  alignment_generated_at: string;
+  trusted_generated_at: string;
+  generated_at: string;
+}
+
+export interface TopicContentSummary {
+  topic_index: number;
+  title: string;
+  screenshot_count: number;
+  screenshots_with_ocr_text: number;
+  ocr_word_count: number;
+  visual_keywords: string[];
+}
+
+export interface OcrResultResponse {
+  status: "ready";
+  ocr: OcrSummary;
+  content: ScreenshotContentSummary;
+  topics: TopicContentSummary[];
+}
+
 export interface PreparedStatusResponse { video_id: string; status: "READY" | "NOT_PREPARED"; prepared: boolean; message: string; resolution?: string | null; duration_seconds?: number | null }
 export interface StorageStatus { prepared_video_count: number; downloads_size_bytes: number; temp_size_bytes: number; output_size_bytes: number; free_space_bytes: number }
 export interface CleanupResponse { status: "completed"; removed_temp_directories: number; freed_bytes: number }
-export interface SystemStatus { backend: boolean; ffmpeg_available: boolean; ffprobe_available: boolean; download_directory_writable: boolean; temp_directory_writable: boolean }
+export interface SystemStatus { backend: boolean; ffmpeg_available: boolean; ffprobe_available: boolean; tesseract_available: boolean; download_directory_writable: boolean; temp_directory_writable: boolean }
