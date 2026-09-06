@@ -19,10 +19,14 @@ class Settings:
     whisper_language: str
     whisper_device: str
     whisper_compute_type: str
+    tesseract_cmd: str | None
+    ocr_language: str
+    ocr_psm: int
 
     @classmethod
     def from_environment(cls) -> "Settings":
         project_root = Path(__file__).resolve().parents[3]
+        tesseract_cmd = os.getenv("TESSERACT_CMD")
         return cls(
             project_root=project_root,
             downloads_dir=project_root / "downloads",
@@ -36,6 +40,9 @@ class Settings:
             whisper_language=os.getenv("WHISPER_LANGUAGE", "en"),
             whisper_device=os.getenv("WHISPER_DEVICE", "cpu"),
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
+            tesseract_cmd=tesseract_cmd.strip() if tesseract_cmd and tesseract_cmd.strip() else None,
+            ocr_language=os.getenv("OCR_LANGUAGE", "eng"),
+            ocr_psm=int(os.getenv("OCR_PSM", "11")),
         )
 
 
