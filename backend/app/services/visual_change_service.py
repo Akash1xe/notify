@@ -39,11 +39,10 @@ class AdaptiveVisualConfig:
 class VisualChangeService:
     """Adaptive two-pass visual scanner.
 
-    Pass 1 samples the entire lecture at low FPS on small frames to locate activity.
-    Pass 2 scans only padded/merged activity windows at higher FPS. The resulting
-    frame-difference file is sparse event evidence rather than one record per source
-    frame pair. This preserves temporal detail where teaching changes while skipping
-    long static explanations.
+    The coarse pass samples the complete lecture at low FPS to locate activity.
+    Only padded activity windows receive higher-rate fine analysis. Sparse quiet
+    sentinels bridge skipped static spans so the downstream teaching-state machine
+    still sees completed states between activity windows.
     """
 
     def __init__(
@@ -105,7 +104,13 @@ class VisualChangeService:
         merged: list[dict] = []
         for item in padded:
             if not merged or float(item["start_seconds"]) - float(merged[-1]["end_seconds"]) > config.merge_gap_seconds:
-                merged.append({**item, "reasons": [str(item["reason"])], "coarse_sample_count": int(item.get("coarse_sample_count") or 0)})
+                merged.append(
+                    {
+                        **item,
+                        "reasons": [str(item["reason"])],
+                        "coarse_sample_count": int(item.get("coarse_sample_count") or 0),
+                    }
+                )
                 continue
             current = merged[-1]
             current["end_seconds"] = max(float(current["end_seconds"]), float(item["end_seconds"]))
@@ -123,14 +128,15 @@ class VisualChangeService:
             item.pop("reason", None)
         return merged
 
-    def _coarse_windows(self, video_id: str, progress: ProgressCallback, timeline: dict) -> tuple[list[dict], int]:
+    def _coarse_windows(self, video_id: str, progress: ProgressCallback, timeline: dict) -> tuple[list[dict], int, float]:
         prepared = self.prepared.get_prepared_video(video_id)
         assert prepared is not None
         duration = float(timeline.get("duration_seconds") or 0.0)
         source_fps = float(timeline.get("fps") or 0.0)
         source_width = int(timeline.get("width") or 0)
         source_height = int(timeline.get("height") or 0)
-        expected = max(1, int(duration * self.config.coarse_fps))
+        coarse_fps = max(0.5, min(self.config.coarse_fps, source_fps))
+        expected = max(1, int(duration * coarse_fps))
 
         raw_windows: list[dict] = []
         previous = None
@@ -152,15 +158,17 @@ class VisualChangeService:
             reason = "STRUCTURAL_ACTIVITY" if saw_structural else "PERSISTENT_LOCAL_CHANGE"
             if saw_scene:
                 reason = "SCENE_TRANSITION"
-            raw_windows.append({
-                "start_seconds": activity_start,
-                "end_seconds": max(activity_start, end),
-                "reason": reason,
-                "peak_score": round(peak_score, 4),
-                "scene_change": saw_scene,
-                "structural_change": saw_structural,
-                "coarse_sample_count": activity_samples,
-            })
+            raw_windows.append(
+                {
+                    "start_seconds": activity_start,
+                    "end_seconds": max(activity_start, end),
+                    "reason": reason,
+                    "peak_score": round(peak_score, 4),
+                    "scene_change": saw_scene,
+                    "structural_change": saw_structural,
+                    "coarse_sample_count": activity_samples,
+                }
+            )
             activity_start = None
             peak_score = 0.0
             saw_scene = False
@@ -169,7 +177,7 @@ class VisualChangeService:
 
         for packet in self.stream.frames(
             prepared.local_video_path,
-            fps=self.config.coarse_fps,
+            fps=coarse_fps,
             source_fps=source_fps,
             source_width=source_width,
             source_height=source_height,
@@ -193,7 +201,10 @@ class VisualChangeService:
             meaningful = (
                 pair.kind in {ChangeKind.STRUCTURAL, ChangeKind.SCENE}
                 or anchor.kind in {ChangeKind.STRUCTURAL, ChangeKind.SCENE}
-                or (pair.kind == ChangeKind.LOCAL and (local_run >= self.config.local_persistence_samples or anchor.kind != ChangeKind.NONE))
+                or (
+                    pair.kind == ChangeKind.LOCAL
+                    and (local_run >= self.config.local_persistence_samples or anchor.kind != ChangeKind.NONE)
+                )
             )
             if meaningful:
                 if activity_start is None:
@@ -215,7 +226,24 @@ class VisualChangeService:
                 progress(min(42.0, sample_count / expected * 42.0), f"Coarse visual scan... {sample_count:,} samples")
 
         close_window(last_activity if activity_start is not None else duration)
-        return self._merge_windows(raw_windows, duration, self.config), sample_count
+        return self._merge_windows(raw_windows, duration, self.config), sample_count, coarse_fps
+
+    @staticmethod
+    def _none_record(previous_frame: int, frame_index: int, previous_timestamp: float, timestamp: float) -> dict:
+        return {
+            "previous_frame_index": previous_frame,
+            "frame_index": frame_index,
+            "previous_timestamp_seconds": round(previous_timestamp, 6),
+            "timestamp_seconds": round(timestamp, 6),
+            "delta_seconds": round(max(0.0, timestamp - previous_timestamp), 6),
+            "activity_window_index": None,
+            "kind": "NONE",
+            "mean_pixel_delta": 0.0,
+            "changed_pixel_ratio": 0.0,
+            "edge_change_ratio": 0.0,
+            "change_bbox_area_ratio": 0.0,
+            "change_score": 0.0,
+        }
 
     def scan(self, video_id: str, progress: ProgressCallback) -> dict:
         prepared = self.prepared.get_prepared_video(video_id)
@@ -239,7 +267,7 @@ class VisualChangeService:
         windows_temp.unlink(missing_ok=True)
 
         progress(1.0, "Starting adaptive coarse scan...")
-        windows, coarse_samples = self._coarse_windows(video_id, progress, timeline)
+        windows, coarse_samples, effective_coarse_fps = self._coarse_windows(video_id, progress, timeline)
         with windows_temp.open("w", encoding="utf-8") as handle:
             for item in windows:
                 handle.write(json.dumps(item, separators=(",", ":")) + "\n")
@@ -250,7 +278,9 @@ class VisualChangeService:
         source_fps = float(timeline.get("fps") or 0.0)
         source_width = int(timeline.get("width") or 0)
         source_height = int(timeline.get("height") or 0)
+        source_frames = int(timeline.get("frame_count") or 0)
         duration = float(timeline.get("duration_seconds") or 0.0)
+        fine_fps = max(1.0, min(self.config.fine_fps, source_fps))
         counts = {kind.value: 0 for kind in ChangeKind}
         fine_samples = 0
         compared_pairs = 0
@@ -259,17 +289,43 @@ class VisualChangeService:
         max_score_frame_index: int | None = None
         last_written_timestamp = 0.0
         last_written_frame = 0
+        have_written = False
+
+        def write_none(output, end_timestamp: float, *, next_window_start: bool = False) -> None:
+            nonlocal compared_pairs, last_written_timestamp, last_written_frame, have_written
+            if end_timestamp <= last_written_timestamp:
+                return
+            target = int(round(end_timestamp * source_fps))
+            if next_window_start:
+                target = max(last_written_frame + 1, target - 1)
+            else:
+                target = max(last_written_frame + 1, target)
+            target = min(max(0, source_frames - 1), target)
+            if target <= last_written_frame:
+                return
+            output.write(json.dumps(self._none_record(last_written_frame, target, last_written_timestamp, end_timestamp), separators=(",", ":")) + "\n")
+            counts[ChangeKind.NONE.value] += 1
+            compared_pairs += 1
+            last_written_timestamp = end_timestamp
+            last_written_frame = target
+            have_written = True
 
         try:
             with temp_path.open("w", encoding="utf-8") as output:
                 for window_index, window in enumerate(windows):
                     start = float(window["start_seconds"])
                     end = float(window["end_seconds"])
+
+                    # Explicitly bridge skipped static time. This lets the teaching-state
+                    # detector emit the completed state before the next writing/transition.
+                    if start - last_written_timestamp >= settings.analysis_stable_seconds:
+                        write_none(output, start, next_window_start=True)
+
                     previous_packet = None
                     previous_signature = None
                     for packet in self.stream.frames(
                         prepared.local_video_path,
-                        fps=self.config.fine_fps,
+                        fps=fine_fps,
                         source_fps=source_fps,
                         source_width=source_width,
                         source_height=source_height,
@@ -277,80 +333,74 @@ class VisualChangeService:
                         start_seconds=start,
                         end_seconds=end,
                     ):
+                        # FFmpeg timestamps are monotonic; clamp source indexes forward only
+                        # when a preceding synthetic quiet sentinel occupies a nearby frame.
+                        packet_frame = packet.frame_index
+                        if have_written and packet.timestamp_seconds > last_written_timestamp:
+                            packet_frame = max(packet_frame, last_written_frame + 1)
+                        if source_frames > 0:
+                            packet_frame = min(source_frames - 1, packet_frame)
                         signature = self.detector.signature(packet.image)
                         fine_samples += 1
                         if previous_packet is not None and previous_signature is not None:
+                            current_frame = max(previous_packet[0] + 1, packet_frame)
+                            if source_frames > 0:
+                                current_frame = min(source_frames - 1, current_frame)
+                            if current_frame <= previous_packet[0]:
+                                previous_packet = (packet_frame, packet.timestamp_seconds)
+                                previous_signature = signature
+                                continue
                             metrics = self.detector.compare(previous_signature, signature)
                             record = {
-                                "previous_frame_index": previous_packet.frame_index,
-                                "frame_index": packet.frame_index,
-                                "previous_timestamp_seconds": round(previous_packet.timestamp_seconds, 6),
+                                "previous_frame_index": previous_packet[0],
+                                "frame_index": current_frame,
+                                "previous_timestamp_seconds": round(previous_packet[1], 6),
                                 "timestamp_seconds": round(packet.timestamp_seconds, 6),
-                                "delta_seconds": round(max(0.0, packet.timestamp_seconds - previous_packet.timestamp_seconds), 6),
+                                "delta_seconds": round(max(0.0, packet.timestamp_seconds - previous_packet[1]), 6),
                                 "activity_window_index": window_index,
                                 **metrics.to_dict(),
                             }
-                            output.write(json.dumps(record, separators=(",", ":")) + "\n")
-                            counts[metrics.kind.value] += 1
-                            compared_pairs += 1
-                            total_score += metrics.change_score
-                            if metrics.change_score > max_score:
-                                max_score = metrics.change_score
-                                max_score_frame_index = packet.frame_index
-                            last_written_timestamp = packet.timestamp_seconds
-                            last_written_frame = packet.frame_index
-                        previous_packet = packet
+                            # If a synthetic gap record ended exactly at this window start,
+                            # never emit an overlapping first fine pair behind it.
+                            if record["previous_timestamp_seconds"] >= last_written_timestamp and record["frame_index"] > last_written_frame:
+                                output.write(json.dumps(record, separators=(",", ":")) + "\n")
+                                counts[metrics.kind.value] += 1
+                                compared_pairs += 1
+                                total_score += metrics.change_score
+                                if metrics.change_score > max_score:
+                                    max_score = metrics.change_score
+                                    max_score_frame_index = current_frame
+                                last_written_timestamp = packet.timestamp_seconds
+                                last_written_frame = current_frame
+                                have_written = True
+                        previous_packet = (packet_frame, packet.timestamp_seconds)
                         previous_signature = signature
+
                     pct = 45.0 + ((window_index + 1) / max(1, len(windows))) * 50.0
                     progress(min(95.0, pct), f"Fine scanning activity window {window_index + 1:,}/{len(windows):,}")
 
-                # Static sentinels let downstream state detection preserve an initial
-                # or final stable screen even when no activity window covers it.
-                if compared_pairs == 0:
+                if not have_written:
                     end_ts = min(duration, max(settings.analysis_stable_seconds, 0.1))
-                    output.write(json.dumps({
-                        "previous_frame_index": 0,
-                        "frame_index": max(1, int(round(end_ts * source_fps))),
-                        "previous_timestamp_seconds": 0.0,
-                        "timestamp_seconds": round(end_ts, 6),
-                        "delta_seconds": round(end_ts, 6),
-                        "activity_window_index": None,
-                        "kind": "NONE",
-                        "mean_pixel_delta": 0.0,
-                        "changed_pixel_ratio": 0.0,
-                        "edge_change_ratio": 0.0,
-                        "change_bbox_area_ratio": 0.0,
-                        "change_score": 0.0,
-                    }, separators=(",", ":")) + "\n")
+                    target = min(max(1, int(round(end_ts * source_fps))), max(1, source_frames - 1))
+                    output.write(json.dumps(self._none_record(0, target, 0.0, end_ts), separators=(",", ":")) + "\n")
                     counts[ChangeKind.NONE.value] += 1
                     compared_pairs = 1
                     last_written_timestamp = end_ts
-                    last_written_frame = max(1, int(round(end_ts * source_fps)))
+                    last_written_frame = target
+                    have_written = True
+
                 if duration - last_written_timestamp >= settings.analysis_stable_seconds:
-                    output.write(json.dumps({
-                        "previous_frame_index": last_written_frame,
-                        "frame_index": max(last_written_frame + 1, int(round(duration * source_fps)) - 1),
-                        "previous_timestamp_seconds": round(last_written_timestamp, 6),
-                        "timestamp_seconds": round(duration, 6),
-                        "delta_seconds": round(duration - last_written_timestamp, 6),
-                        "activity_window_index": None,
-                        "kind": "NONE",
-                        "mean_pixel_delta": 0.0,
-                        "changed_pixel_ratio": 0.0,
-                        "edge_change_ratio": 0.0,
-                        "change_bbox_area_ratio": 0.0,
-                        "change_score": 0.0,
-                    }, separators=(",", ":")) + "\n")
-                    counts[ChangeKind.NONE.value] += 1
-                    compared_pairs += 1
+                    final_timestamp = min(duration, max(last_written_timestamp, (source_frames - 1) / max(source_fps, 0.001)))
+                    write_none(output, final_timestamp)
+
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temp_path, output_path)
 
-            source_frames = int(timeline.get("frame_count") or 0)
             analyzed_samples = coarse_samples + fine_samples
             reduction = max(0.0, 100.0 * (1.0 - analyzed_samples / max(1, source_frames)))
             wall = max(0.001, time.perf_counter() - started)
+            activity_seconds = sum(float(w["end_seconds"]) - float(w["start_seconds"]) for w in windows)
             stat = prepared.local_video_path.stat()
             summary = {
                 "video_id": video_id,
@@ -374,11 +424,13 @@ class VisualChangeService:
                 "fine_sample_count": fine_samples,
                 "analyzed_sample_count": analyzed_samples,
                 "activity_window_count": len(windows),
-                "activity_seconds": round(sum(float(w["end_seconds"]) - float(w["start_seconds"]) for w in windows), 3),
-                "static_seconds_skipped": round(max(0.0, duration - sum(float(w["end_seconds"]) - float(w["start_seconds"]) for w in windows)), 3),
+                "activity_seconds": round(activity_seconds, 3),
+                "static_seconds_skipped": round(max(0.0, duration - activity_seconds), 3),
                 "estimated_frame_reduction_percent": round(reduction, 2),
                 "processing_wall_seconds": round(wall, 3),
                 "analysis_real_time_factor": round(wall / max(0.001, duration), 4),
+                "effective_coarse_fps": round(effective_coarse_fps, 4),
+                "effective_fine_fps": round(fine_fps, 4),
                 "detector_config": self.detector.config.to_dict(),
                 "adaptive_config": self.config.to_dict(),
                 "generated_at": utc_now_iso(),
