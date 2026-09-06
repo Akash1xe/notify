@@ -1,123 +1,163 @@
 # Notify — Lecture to PDF
 
-Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local copy, analyzes visual changes, detects stable teaching states, builds a protected trusted screenshot set, and now generates a timestamped local transcript aligned to those trusted screenshots.
+Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares a verified local video, detects stable teaching states, builds a protected screenshot set, generates a timestamped local transcript, and now organizes that transcript and the trusted screenshots into ordered lecture sections.
 
-> Current milestone: **Phase 3.1 complete — local transcript generation + trusted screenshot alignment**.
+> Current milestone: **Phase 3.2 complete — lecture topic / section detection**.
 
-## Current capabilities
+## Current pipeline
+
+```text
+YouTube URL
+    ↓
+Validate + metadata
+    ↓
+Prepare verified lecture.mp4
+    ↓
+Build complete frame timeline
+    ↓
+Compare every consecutive frame pair
+    ↓
+Detect stable teaching states
+    ↓
+Extract screenshot candidates
+    ↓
+Conservative duplicate filtering
+    ↓
+Content-loss protection + manual review
+    ↓
+Ordered trusted screenshot set
+    ↓
+Extract 16 kHz mono audio
+    ↓
+faster-whisper timestamped transcript
+    ↓
+Trusted screenshot ↔ nearby speech alignment
+    ↓
+Detect coherent lecture sections
+    ↓
+Assign every trusted screenshot to one section
+```
+
+## Completed milestones
 
 ### Phase 1 — local lecture preparation
 
-- YouTube URL input and validation
+- YouTube URL validation and normalization
 - yt-dlp metadata/accessibility inspection
-- Metadata preview (title, channel, duration, thumbnail, resolution)
-- Local 720p-first download/preparation
-- FFmpeg/ffprobe verification
+- Metadata preview
+- 720p-first local download/preparation
+- FFmpeg/ffprobe media verification
 - Background preparation jobs and progress polling
 - Restart-safe prepared-video reuse
-- Interrupted-job recovery, stale-temp cleanup, storage status, and local-copy deletion
+- Interrupted-job recovery and stale temp cleanup
 
 ### Phase 2.1 — frame timeline
 
 - OpenCV sequential decoding
 - One frame at a time in memory
-- Frame indexes + monotonic timestamps
-- Persisted complete frame timeline
-- Cache invalidation when the source video changes
+- Ordered frame indexes and monotonic timestamps
+- Persisted complete timeline
 
 ### Phase 2.2 — visual change detection
 
-- Inspects every consecutive frame pair (`N` frames => exactly `N-1` comparisons)
-- Fails closed on gaps/reordering/incomplete coverage
+- Inspects every consecutive frame pair
+- Requires `N` decoded frames to produce exactly `N-1` comparisons
 - Conservative `NONE`, `LOCAL`, `STRUCTURAL`, `SCENE` classification
-- Uses color, edge, changed-region, and pixel-difference information
-- Does not discard `LOCAL` changes prematurely
+- Uses color, edges, changed-region area, and pixel differences
+- Does not discard local changes prematurely
 
 ### Phase 2.3 — stable teaching-state detection
 
-- Groups continuous writing/drawing activity temporally
-- Normal checkpoint after about 1.25 seconds of visual stability
-- Avoids one screenshot per written character or pen stroke
-- Preserves short completed pauses before strong transitions
-- Preserves unfinished final content at end-of-video
-- Persists ordered checkpoint references
+- Groups continuous writing/drawing into temporal activity
+- Normal checkpoint after about 1.25 seconds of stability
+- Avoids one screenshot per written character
+- Protects completed content before strong transitions
+- Keeps unfinished final content with an end-of-video fallback
 
-### Phase 2.4 — screenshot candidate extraction
+### Phase 2.4 — screenshot extraction + deduplication
 
-- Resolves teaching checkpoints to exact video frames
-- Saves retained candidates as JPEG (quality 92)
-- Persists a manifest entry for every checkpoint, including suppressed duplicates
-- Near-duplicate removal requires both close dHash distance and very small thumbnail pixel difference
-- Never automatically removes transition/end/single-frame protected checkpoints
-- Uses only a small recent comparison window to avoid distant-section overmatching
+- Resolves stable checkpoints to exact lecture frames
+- Saves high-quality JPEG candidates
+- Persists evidence for every checkpoint, including suppressed duplicates
+- Near-duplicate removal requires both dHash and pixel-distance agreement
+- Protected checkpoints are never automatically discarded
 
-### Phase 2.5 — candidate review + content protection hardening
+### Phase 2.5 — candidate review + content protection
 
-- Adds visual-detail metrics (`edge_density`, `contrast_std`)
-- Detects content-loss risk before scene replacement / major detail loss
-- Builds a separate ordered **trusted screenshot set**
-- Keeps original candidate evidence non-destructive and auditable
-- Allows manual restore of suppressed duplicates
-- Allows manual suppression of ordinary retained candidates
-- Prevents accidental suppression of auto-protected candidates
-- Rebuilds the trusted set atomically after review decisions
+- Detects scene/detail-loss risk
+- Builds a separate ordered trusted screenshot set
+- Original candidate evidence remains non-destructive
+- Allows manual restore/suppress for ordinary candidates
+- Prevents accidental suppression of protected candidates
 
 ### Phase 3.1 — local transcript + screenshot alignment
 
-- Uses **faster-whisper** locally; no custom model training is required
-- Extracts a standard mono 16 kHz WAV with FFmpeg
+- Uses faster-whisper locally; no custom model training
+- Extracts mono 16 kHz WAV with FFmpeg
 - Default model: `small.en`
 - Default CPU compute mode: `int8`
-- Generates ordered timestamped transcript segments
-- Persists transcript independently from screenshot review state
-- Aligns every trusted screenshot to nearby teacher speech
-- Default alignment context:
-  - 6 seconds before screenshot timestamp
-  - 8 seconds after screenshot timestamp
-- Keeps silent screenshots even when no speech is nearby
-- Changing screenshot review decisions invalidates only screenshot/transcript alignment, not the expensive Whisper transcript
-- Background transcript jobs support progress polling, duplicate-job prevention, failure reporting, and restart recovery
-- The first local run may download the configured pretrained Whisper model
+- Persists timestamped transcript segments
+- Aligns every trusted screenshot to nearby speech
+- Default context window: 6 seconds before / 8 seconds after screenshot time
+- Silent screenshots remain valid educational content
+- Screenshot review changes rebuild alignment without rerunning Whisper
 
-## Why transcript and alignment are separate
+### Phase 3.2 — lecture topic / section detection
 
-The raw transcript depends on the prepared lecture audio, while screenshot alignment depends on the current trusted screenshot set.
+Topic detection is deterministic and local. It does not require an external LLM.
+
+Boundary evidence combines:
+
+- meaningful speech gaps
+- transcript vocabulary shifts
+- explicit transition phrases such as "next", "moving on", or "finally"
+- strong visual section transitions from screenshot provenance
+
+The detector also applies section-duration constraints so normal sentence changes do not become dozens of tiny topics.
+
+Current defaults:
+
+- minimum normal section duration: about **45 seconds**
+- maximum section duration before a forced split: about **5 minutes**
+
+For each section Notify persists:
+
+- ordered topic index
+- locally derived title
+- start/end timestamps
+- transcript segment range
+- word count
+- top keywords
+- boundary reasons
+- trusted screenshot indexes
+- original candidate indexes
+- screenshot count
+
+Coverage fails closed unless every trusted screenshot is assigned to a section.
+
+If a lecture contains trusted visual content but little/no detected speech, Notify can create visual-only sections rather than deleting those screenshots.
+
+## Topic detection example
 
 ```text
-lecture.mp4
-    ↓
-16 kHz mono audio
-    ↓
-faster-whisper
-    ↓
-timestamped transcript (cached)
-    ↓
-trusted screenshot timestamps
-    ↓
-screenshot ↔ nearby speech alignment
+0:00  Binary Search Introduction
+        screenshots 0, 1
+
+1:05  Search Space And Mid Calculation
+        screenshots 2, 3, 4
+
+3:10  Moving Low And High
+        screenshots 5, 6
+
+5:40  Time Complexity And Logarithmic Growth
+        screenshots 7, 8
 ```
 
-If you restore or suppress screenshots later:
-
-```text
-Trusted set changes
-      ↓
-Keep existing Whisper transcript
-      ↓
-Rebuild only screenshot alignment
-```
-
-This avoids repeating the expensive transcription stage.
-
-## Content-safety philosophy
-
-When uncertain, Notify favors **keeping educational content** over aggressive deduplication.
-
-A screenshot is not considered unimportant simply because the teacher is silent near that frame. Visual equations, completed diagrams, code, or board content can remain in the trusted set without transcript text.
+The titles are heuristic local labels. The original transcript and screenshot evidence remain unchanged and can be enriched later by OCR/semantic processing.
 
 ## Runtime storage
 
-A lecture that reaches Phase 3.1 can contain:
+A lecture that reaches Phase 3.2 can contain:
 
 ```text
 downloads/<video_id>/
@@ -143,47 +183,62 @@ downloads/<video_id>/
     ├── transcript-segments.jsonl
     ├── transcript-summary.json
     ├── screenshot-transcript-map.jsonl
-    └── screenshot-transcript-map-summary.json
+    ├── screenshot-transcript-map-summary.json
+    ├── lecture-topics.jsonl
+    └── lecture-topics-summary.json
 ```
 
-### Transcript segment record
-
-`transcript-segments.jsonl` contains ordered records such as:
+A topic record is conceptually:
 
 ```json
 {
-  "segment_index": 18,
-  "start_seconds": 72.14,
-  "end_seconds": 78.42,
-  "text": "Now we calculate the middle index using low and high."
+  "topic_index": 2,
+  "title": "Time complexity and logarithmic growth",
+  "start_seconds": 301.5,
+  "end_seconds": 420.2,
+  "segment_start_index": 48,
+  "segment_end_index": 66,
+  "keywords": ["complexity", "logarithmic", "binary", "search"],
+  "boundary_reasons": ["TRANSITION_PHRASE", "VOCABULARY_SHIFT"],
+  "trusted_screenshot_indexes": [7, 8],
+  "screenshot_count": 2
 }
 ```
 
-### Screenshot alignment record
+## Why data layers remain separate
 
-`screenshot-transcript-map.jsonl` contains records such as:
+```text
+lecture.mp4
+    ↓
+visual evidence
+    ↓
+trusted screenshots
 
-```json
-{
-  "trusted_index": 7,
-  "candidate_index": 9,
-  "frame_index": 2310,
-  "timestamp_seconds": 77.0,
-  "context_start_seconds": 71.0,
-  "context_end_seconds": 85.0,
-  "segment_indexes": [17, 18, 19],
-  "text": "Now we calculate the middle index using low and high..."
-}
+lecture.mp4
+    ↓
+audio
+    ↓
+raw timestamped transcript
+
+trusted screenshots + transcript
+    ↓
+alignment
+    ↓
+ordered topic groups
 ```
+
+Changing a screenshot review decision does not destroy or regenerate the raw transcript. Topic results are invalidated and rebuilt only when their transcript/alignment/trusted-set dependencies change.
 
 ## Stack
 
 ### Frontend
+
 - Next.js App Router
 - TypeScript
 - Tailwind CSS
 
 ### Backend
+
 - Python
 - FastAPI
 - Uvicorn
@@ -228,8 +283,6 @@ Backend: `http://localhost:8000`
 
 ### Whisper configuration
 
-Defaults are chosen for an English lecture on a normal CPU:
-
 ```text
 WHISPER_MODEL=small.en
 WHISPER_LANGUAGE=en
@@ -237,9 +290,7 @@ WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 ```
 
-They are optional environment variables. For another language, use a multilingual model such as `small` and change `WHISPER_LANGUAGE` accordingly.
-
-The first transcription run may need internet access once to download the selected pretrained model. After it is cached locally, transcription can reuse it.
+The first real transcription may need internet access once to download the selected pretrained model. Afterwards the local model cache can be reused.
 
 ## Frontend setup
 
@@ -252,70 +303,27 @@ npm run dev
 
 Frontend: `http://localhost:3000`
 
-Default frontend env:
+Default frontend environment:
 
 ```text
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-## Current user flow
-
-```text
-YouTube URL
-    ↓
-Validate + metadata
-    ↓
-Prepare verified lecture.mp4
-    ↓
-Build frame timeline
-    ↓
-Analyze every consecutive visual transition
-    ↓
-Detect stable teaching states
-    ↓
-Extract screenshot candidates
-    ↓
-Conservative near-duplicate filtering
-    ↓
-Detect content-loss risk
-    ↓
-Review retained + suppressed candidates
-    ↓
-Build ordered trusted screenshot set
-    ↓
-Extract 16 kHz mono audio
-    ↓
-Generate timestamped faster-whisper transcript
-    ↓
-Align teacher speech to trusted screenshots
-    ↓
-TRANSCRIPT + SCREENSHOT CONTEXT READY
-```
-
-## Main API endpoints
+## Topic API
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| GET | `/health` | Backend connectivity |
-| POST | `/api/video/metadata` | Validate and return video metadata |
-| POST | `/api/video/prepare` | Prepare/reuse local lecture |
-| GET | `/api/jobs/{job_id}` | Poll preparation |
-| POST | `/api/analysis/start` | Build/reuse frame timeline |
-| GET | `/api/analysis/{video_id}/timeline` | Timeline summary |
-| POST | `/api/analysis/changes/start` | Analyze visual changes |
-| GET | `/api/analysis/{video_id}/changes` | Visual-change summary |
-| POST | `/api/analysis/states/start` | Detect stable teaching states |
-| GET | `/api/analysis/{video_id}/states` | Teaching-state summary |
-| POST | `/api/analysis/candidates/start` | Extract screenshot candidates |
-| GET | `/api/analysis/{video_id}/candidates` | Candidate summary |
-| GET | `/api/analysis/{video_id}/candidate-review` | Initialize/read review + trusted set |
-| PUT | `/api/analysis/{video_id}/candidate-review/{candidate_index}` | Keep/restore/suppress a candidate |
-| GET | `/api/analysis/{video_id}/candidates/{candidate_index}/image` | Preview retained or suppressed candidate |
-| POST | `/api/analysis/transcript/start` | Start/reuse local transcription + alignment |
-| GET | `/api/analysis/transcript/jobs/{job_id}` | Poll transcript job |
-| GET | `/api/analysis/{video_id}/transcript` | Read transcript/alignment summaries |
-| GET | `/api/storage/status` | Local storage usage |
-| POST | `/api/storage/cleanup` | Clean stale temporary data |
+| POST | `/api/analysis/topics/start` | Start/reuse lecture topic detection |
+| GET | `/api/analysis/topics/jobs/{job_id}` | Poll topic detection |
+| GET | `/api/analysis/{video_id}/topics` | Read ordered topic groups |
+
+The existing transcript endpoints remain:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/analysis/transcript/start` | Generate/reuse transcript + alignment |
+| GET | `/api/analysis/transcript/jobs/{job_id}` | Poll transcription |
+| GET | `/api/analysis/{video_id}/transcript` | Read transcript/alignment summary |
 
 ## Verification
 
@@ -325,24 +333,24 @@ GitHub Actions runs:
 - frontend TypeScript typecheck
 - Next.js production build
 
-Phase 3.1 adds deterministic tests with a fake Whisper model so CI never downloads model weights. Tests verify:
+Phase 3.2 tests verify:
 
-- timestamped transcript persistence
-- trusted screenshot ↔ nearby speech alignment
-- transcript cache validation against the source lecture
-- review changes trigger realignment without rerunning Whisper or audio extraction
+- coherent section splitting from transcript/visual evidence
+- transition phrase + vocabulary-shift boundaries
+- every trusted screenshot is assigned exactly once
+- topic result cache is tied to transcript, alignment, and trusted-set versions
+- changing the trusted screenshot version invalidates topics without changing the raw transcript
 
 ## Not implemented yet
 
-- semantic topic/section detection
 - OCR / screenshot text extraction
-- topic ↔ screenshot grouping
-- semantic importance ranking
-- full coverage verification pass
+- transcript + OCR semantic enrichment
+- semantic importance/ranking
+- final coverage-verification pass
 - PDF generation
 
 ## Next milestone
 
-**Phase 3.2 — Lecture Topic / Section Detection**
+**Phase 4 — OCR + Screenshot Content Enrichment foundation**
 
-The next stage will use the timestamped transcript plus trusted screenshot timing to identify coherent lecture sections, assign screenshots to those sections, and produce ordered topic groups without changing the original transcript or trusted screenshot evidence.
+The next stage should extract visible text from trusted screenshots locally, preserve equations/code/board text where practical, and combine screenshot text with transcript/topic context before the final coverage and PDF stages.
