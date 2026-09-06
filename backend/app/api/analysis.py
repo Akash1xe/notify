@@ -10,6 +10,8 @@ from app.api.dependencies import (
     screenshot_candidate_service,
     teaching_state_job_manager,
     teaching_state_service,
+    topic_detection_job_manager,
+    topic_detection_service,
     transcription_job_manager,
     transcription_service,
     visual_change_job_manager,
@@ -22,6 +24,7 @@ from app.schemas.analysis import (
     CandidateReviewResponse,
     FrameTimelineResponse,
     FrameTimelineSummary,
+    LectureTopicResultResponse,
     ScreenshotCandidateResponse,
     ScreenshotCandidateSummary,
     StartFrameAnalysisRequest,
@@ -30,6 +33,8 @@ from app.schemas.analysis import (
     StartScreenshotCandidateAnalysisResponse,
     StartTeachingStateAnalysisRequest,
     StartTeachingStateAnalysisResponse,
+    StartTopicDetectionRequest,
+    StartTopicDetectionResponse,
     StartTranscriptionRequest,
     StartTranscriptionResponse,
     StartVisualChangeAnalysisRequest,
@@ -49,6 +54,8 @@ from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJob
 from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
+from app.services.topic_detection_job_manager import TopicDetectionJobManager
+from app.services.topic_detection_service import TopicDetectionService
 from app.services.transcription_job_manager import TranscriptionJobManager
 from app.services.transcription_service import TranscriptionService
 from app.services.visual_change_job_manager import VisualChangeJobManager
@@ -133,6 +140,18 @@ def transcription_job_status(job_id: str, jobs: TranscriptionJobManager = Depend
     return _job_response(jobs.get(job_id))
 
 
+@router.post("/topics/start", response_model=StartTopicDetectionResponse)
+def start_topic_detection(payload: StartTopicDetectionRequest, jobs: TopicDetectionJobManager = Depends(topic_detection_job_manager)) -> StartTopicDetectionResponse:
+    validate_video_id(payload.video_id)
+    job, reused = jobs.start(payload.video_id)
+    return StartTopicDetectionResponse(job_id=job.job_id, video_id=job.video_id, status=job.status, reused_existing=reused, message=job.message)
+
+
+@router.get("/topics/jobs/{job_id}", response_model=AnalysisJobResponse)
+def topic_detection_job_status(job_id: str, jobs: TopicDetectionJobManager = Depends(topic_detection_job_manager)) -> AnalysisJobResponse:
+    return _job_response(jobs.get(job_id))
+
+
 @router.get("/{video_id}/timeline", response_model=FrameTimelineResponse)
 def frame_timeline(video_id: str, timeline: FrameTimelineService = Depends(frame_timeline_service)) -> FrameTimelineResponse:
     validate_video_id(video_id)
@@ -199,3 +218,12 @@ def transcript_result(video_id: str, transcription: TranscriptionService = Depen
     if not result:
         raise AppError(ErrorCode.TRANSCRIPT_NOT_FOUND, "A valid timestamped transcript and screenshot alignment do not exist yet.", 404)
     return TranscriptResultResponse.model_validate(result)
+
+
+@router.get("/{video_id}/topics", response_model=LectureTopicResultResponse)
+def lecture_topics(video_id: str, topics: TopicDetectionService = Depends(topic_detection_service)) -> LectureTopicResultResponse:
+    validate_video_id(video_id)
+    result = topics.get_result(video_id)
+    if not result:
+        raise AppError(ErrorCode.TOPICS_NOT_FOUND, "Lecture topics have not been detected for the current transcript and trusted screenshot set.", 404)
+    return LectureTopicResultResponse.model_validate(result)
