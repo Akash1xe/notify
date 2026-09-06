@@ -13,8 +13,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install media and OCR system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg tesseract-ocr
+      - name: Verify Tesseract
+        run: tesseract --version
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
       - name: Run backend tests
