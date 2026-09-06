@@ -19,6 +19,8 @@ from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
 from app.services.ocr_job_manager import OcrJobManager
 from app.services.ocr_service import OcrService
+from app.services.pdf_job_manager import PdfGenerationJobManager
+from app.services.pdf_service import PdfService
 from app.services.prepared_video_service import PreparedVideoService
 from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJobManager
 from app.services.screenshot_candidate_service import ScreenshotCandidateService
@@ -98,6 +100,13 @@ async def lifespan(app: FastAPI):
         visual_changes=visual_changes,
     )
     coverage_jobs = CoverageJobManager(storage=storage, coverage=coverage)
+    pdf = PdfService(
+        storage=storage,
+        coverage=coverage,
+        review=candidate_review,
+        topics=topic_detection,
+    )
+    pdf_jobs = PdfGenerationJobManager(storage=storage, pdf=pdf)
 
     app.state.storage = storage
     app.state.media = media
@@ -122,6 +131,8 @@ async def lifespan(app: FastAPI):
     app.state.ocr_jobs = ocr_jobs
     app.state.coverage = coverage
     app.state.coverage_jobs = coverage_jobs
+    app.state.pdf = pdf
+    app.state.pdf_jobs = pdf_jobs
 
     logger.info(
         "Notify backend ready. ffmpeg=%s ffprobe=%s whisper_model=%s tesseract=%s recovered_jobs=%s",
@@ -134,7 +145,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],

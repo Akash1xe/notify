@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+import { PdfWorkflowCard } from "@/components/pdf-workflow-card";
 import type { CoverageFinding, CoverageSummary } from "@/types/coverage";
 import type { VideoMetadata } from "@/types/api";
 
@@ -30,8 +34,19 @@ function evidencePreview(evidence: Record<string, unknown>) {
 }
 
 export function CoverageCard({ video, summary, findings, onBackToOcr, onChooseAnother }: Props) {
+  const [showPdf, setShowPdf] = useState(false);
   const blocking = findings.filter((finding) => finding.blocking);
   const warnings = findings.filter((finding) => !finding.blocking);
+
+  if (showPdf && summary.ready_for_pdf) {
+    return (
+      <PdfWorkflowCard
+        video={video}
+        onBackToCoverage={() => setShowPdf(false)}
+        onChooseAnother={onChooseAnother}
+      />
+    );
+  }
 
   return (
     <section className={`rounded-2xl border p-6 ${summary.coverage_passed ? "border-emerald-900/60 bg-emerald-950/20" : "border-red-900/60 bg-red-950/20"}`}>
@@ -82,18 +97,19 @@ export function CoverageCard({ video, summary, findings, onBackToOcr, onChooseAn
 
       {summary.coverage_passed && (
         <div className="mt-5 rounded-xl border border-emerald-800/60 bg-emerald-950/30 p-4 text-sm leading-6 text-emerald-100">
-          No blocking missed-content signal remains after the audit. This audit cannot mathematically guarantee perfect capture for every possible lecture, but the implemented evidence checks have passed and the trusted set is cleared for the PDF stage.
+          No blocking missed-content signal remains after the audit. The final PDF stage preserves every trusted screenshot and allows page reordering without weakening the coverage decision.
         </div>
       )}
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
         <button
           type="button"
-          disabled
-          title={summary.ready_for_pdf ? "PDF generation is the next phase" : "Resolve blocking coverage findings before PDF generation"}
-          className="rounded-xl bg-slate-700 px-4 py-2.5 font-semibold text-slate-400 opacity-70"
+          disabled={!summary.ready_for_pdf}
+          title={summary.ready_for_pdf ? "Open final PDF review" : "Resolve blocking coverage findings before PDF generation"}
+          onClick={() => setShowPdf(true)}
+          className="rounded-xl bg-emerald-300 px-4 py-2.5 font-semibold text-emerald-950 hover:bg-emerald-200 disabled:bg-slate-700 disabled:text-slate-400 disabled:opacity-70"
         >
-          {summary.ready_for_pdf ? "Generate PDF — Next Phase" : "Generate PDF — Coverage Blocked"}
+          {summary.ready_for_pdf ? "Review & Generate PDF" : "Generate PDF — Coverage Blocked"}
         </button>
         <button type="button" onClick={onBackToOcr} className="rounded-xl border border-slate-700 px-4 py-2.5 font-medium text-slate-200 hover:border-slate-500">Back to OCR Results</button>
         <button type="button" onClick={onChooseAnother} className="rounded-xl border border-slate-700 px-4 py-2.5 font-medium text-slate-200 hover:border-slate-500">Choose Another Video</button>

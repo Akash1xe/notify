@@ -9,6 +9,8 @@ from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
 from app.services.ocr_job_manager import OcrJobManager
 from app.services.ocr_service import OcrService
+from app.services.pdf_job_manager import PdfGenerationJobManager
+from app.services.pdf_service import PdfService
 from app.services.prepared_video_service import PreparedVideoService
 from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJobManager
 from app.services.screenshot_candidate_service import ScreenshotCandidateService
@@ -110,3 +112,11 @@ def coverage_service(request: Request) -> CoverageService:
 
 def coverage_job_manager(request: Request) -> CoverageJobManager:
     return request.app.state.coverage_jobs
+
+
+def pdf_service(request: Request) -> PdfService:
+    return request.app.state.pdf
+
+
+def pdf_generation_job_manager(request: Request) -> PdfGenerationJobManager:
+    return request.app.state.pdf_jobs
