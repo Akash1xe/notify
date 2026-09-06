@@ -11,6 +11,8 @@ from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.storage_service import StorageService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
+from app.services.transcription_job_manager import TranscriptionJobManager
+from app.services.transcription_service import TranscriptionService
 from app.services.visual_change_job_manager import VisualChangeJobManager
 from app.services.visual_change_service import VisualChangeService
 from app.services.youtube_service import YoutubeService
@@ -70,3 +72,11 @@ def screenshot_candidate_job_manager(request: Request) -> ScreenshotCandidateJob
 
 def candidate_review_service(request: Request) -> CandidateReviewService:
     return request.app.state.candidate_review
+
+
+def transcription_service(request: Request) -> TranscriptionService:
+    return request.app.state.transcription
+
+
+def transcription_job_manager(request: Request) -> TranscriptionJobManager:
+    return request.app.state.transcription_jobs
