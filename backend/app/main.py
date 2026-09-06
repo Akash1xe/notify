@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
+from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
+from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
 from app.services.prepared_video_service import PreparedVideoService
@@ -42,6 +44,8 @@ async def lifespan(app: FastAPI):
         min_free_space_bytes=settings.min_free_space_bytes,
     )
     jobs = JobManager(storage=storage, youtube=youtube, downloader=downloader, prepared=prepared)
+    frame_timeline = FrameTimelineService(storage=storage, prepared=prepared)
+    analysis_jobs = FrameAnalysisJobManager(storage=storage, timeline=frame_timeline)
 
     app.state.storage = storage
     app.state.media = media
@@ -49,6 +53,8 @@ async def lifespan(app: FastAPI):
     app.state.prepared = prepared
     app.state.downloader = downloader
     app.state.jobs = jobs
+    app.state.frame_timeline = frame_timeline
+    app.state.analysis_jobs = analysis_jobs
 
     logger.info(
         "Notify backend ready. ffmpeg=%s ffprobe=%s recovered_jobs=%s",
@@ -57,7 +63,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
