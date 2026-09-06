@@ -97,6 +97,12 @@ class StorageService:
     def screenshot_transcript_map_summary_path(self, video_id: str) -> Path:
         return self.analysis_dir(video_id) / "screenshot-transcript-map-summary.json"
 
+    def lecture_topics_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "lecture-topics.jsonl"
+
+    def lecture_topics_summary_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "lecture-topics-summary.json"
+
     def job_dir(self, job_id: str) -> Path:
         self.validate_job_id(job_id)
         return self._assert_within(self.temp_dir / job_id, self.temp_dir)
@@ -282,7 +288,11 @@ class StorageService:
             job = self.read_job(item.name)
             if job and job.status.transient:
                 job.status = JobStatus.INTERRUPTED
-                if job.job_type == JobType.TRANSCRIPTION:
+                if job.job_type == JobType.TOPIC_DETECTION:
+                    job.message = "Lecture topic detection was interrupted before completion."
+                    job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
+                    job.error_message = "Lecture topic detection was interrupted. Start it again."
+                elif job.job_type == JobType.TRANSCRIPTION:
                     job.message = "Transcript generation was interrupted before completion."
                     job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
                     job.error_message = "Transcript generation was interrupted. Start it again."
