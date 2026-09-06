@@ -9,6 +9,7 @@ from typing import Any
 class JobType(str, Enum):
     PREPARATION = "PREPARATION"
     FRAME_TIMELINE = "FRAME_TIMELINE"
+    VISUAL_CHANGE = "VISUAL_CHANGE"
 
 
 class JobStatus(str, Enum):
@@ -18,6 +19,7 @@ class JobStatus(str, Enum):
     VERIFYING = "VERIFYING"
     FINALIZING = "FINALIZING"
     SCANNING_FRAMES = "SCANNING_FRAMES"
+    COMPARING_FRAMES = "COMPARING_FRAMES"
     READY = "READY"
     FAILED = "FAILED"
     INTERRUPTED = "INTERRUPTED"
