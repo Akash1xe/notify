@@ -17,6 +17,7 @@ from app.services.storage_service import StorageService
 from app.services.teaching_state_service import TeachingStateService
 
 ProgressCallback = Callable[[float, str], None]
+PIPELINE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,9 @@ class ScreenshotCandidateConfig:
     comparison_width: int = 160
     comparison_height: int = 90
     recent_comparison_window: int = 5
+    content_loss_edge_ratio: float = 0.60
+    content_loss_contrast_ratio: float = 0.85
+    minimum_edge_density_for_loss_check: float = 0.003
 
     def to_dict(self) -> dict[str, int | float]:
         return asdict(self)
@@ -68,6 +72,8 @@ class ScreenshotCandidateService:
         manifest_path = self.storage.screenshot_candidates_path(video_id)
         images_dir = self.storage.screenshot_candidates_dir(video_id)
         if not summary or not manifest_path.exists() or not images_dir.exists():
+            return None
+        if int(summary.get("pipeline_version") or 0) != PIPELINE_VERSION:
             return None
 
         stat = prepared.local_video_path.stat()
@@ -138,6 +144,14 @@ class ScreenshotCandidateService:
         )
         return Fingerprint(dhash=value, thumbnail=thumbnail)
 
+    def detail_metrics(self, frame: np.ndarray) -> tuple[float, float]:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        reduced = cv2.resize(gray, (320, 180), interpolation=cv2.INTER_AREA)
+        edges = cv2.Canny(reduced, 60, 160)
+        edge_density = float(np.mean(edges > 0))
+        contrast_std = float(np.std(reduced) / 255.0)
+        return edge_density, contrast_std
+
     @staticmethod
     def hash_distance(left: Fingerprint, right: Fingerprint) -> int:
         return (left.dhash ^ right.dhash).bit_count()
@@ -155,6 +169,31 @@ class ScreenshotCandidateService:
             if mean_difference <= self.config.max_mean_abs_difference:
                 return candidate.candidate_index, distance, mean_difference
         return None, None, None
+
+    def mark_content_loss_risks(self, records: list[dict]) -> int:
+        risk_count = 0
+        for record in records:
+            record["content_loss_risk"] = False
+            record["content_loss_reason"] = None
+
+        for index in range(len(records) - 1):
+            current = records[index]
+            following = records[index + 1]
+            scene_replacement = str(following.get("source_change_kind") or "NONE") == "SCENE"
+            current_edges = float(current.get("edge_density") or 0.0)
+            next_edges = float(following.get("edge_density") or 0.0)
+            current_contrast = float(current.get("contrast_std") or 0.0)
+            next_contrast = float(following.get("contrast_std") or 0.0)
+            sharp_detail_drop = (
+                current_edges >= self.config.minimum_edge_density_for_loss_check
+                and next_edges <= current_edges * self.config.content_loss_edge_ratio
+                and next_contrast <= max(0.01, current_contrast * self.config.content_loss_contrast_ratio)
+            )
+            if scene_replacement or sharp_detail_drop:
+                current["content_loss_risk"] = True
+                current["content_loss_reason"] = "SCENE_REPLACEMENT" if scene_replacement else "DETAIL_DROP"
+                risk_count += 1
+        return risk_count
 
     def _write_jpeg(self, path: Path, frame: np.ndarray) -> None:
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.config.jpeg_quality])
@@ -208,58 +247,69 @@ class ScreenshotCandidateService:
         duplicate_count = 0
         protected_kept_count = 0
         current_frame_index = 0
+        payloads: list[dict] = []
 
         try:
-            with temp_manifest.open("w", encoding="utf-8") as manifest:
-                while current_frame_index <= last_target_frame:
-                    ok, frame = capture.read()
-                    if not ok or frame is None:
-                        raise AppError(ErrorCode.SCREENSHOT_EXTRACTION_FAILED, "The video ended before every teaching checkpoint could be extracted.", 422)
+            while current_frame_index <= last_target_frame:
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    raise AppError(ErrorCode.SCREENSHOT_EXTRACTION_FAILED, "The video ended before every teaching checkpoint could be extracted.", 422)
 
-                    state = target_by_frame.get(current_frame_index)
-                    if state is not None:
-                        fingerprint = self.fingerprint(frame)
-                        protected = bool(state.get("protected_before_transition")) or str(state.get("reason")) in {
-                            "PRE_TRANSITION_PROTECTION",
-                            "END_OF_VIDEO_FALLBACK",
-                            "SINGLE_FRAME",
-                        }
-                        duplicate_of, hash_distance, mean_difference = self.find_duplicate(fingerprint, recent_kept)
-                        keep = protected or duplicate_of is None
-                        filename: str | None = None
+                state = target_by_frame.get(current_frame_index)
+                if state is not None:
+                    fingerprint = self.fingerprint(frame)
+                    edge_density, contrast_std = self.detail_metrics(frame)
+                    protected = bool(state.get("protected_before_transition")) or str(state.get("reason")) in {
+                        "PRE_TRANSITION_PROTECTION",
+                        "END_OF_VIDEO_FALLBACK",
+                        "SINGLE_FRAME",
+                    }
+                    duplicate_of, hash_distance, mean_difference = self.find_duplicate(fingerprint, recent_kept)
+                    keep = protected or duplicate_of is None
+                    filename: str | None = None
 
-                        if keep:
-                            filename = f"candidate-{candidate_index:06d}.jpg"
-                            self._write_jpeg(temp_images_dir / filename, frame)
-                            recent_kept.append(KeptCandidate(candidate_index=candidate_index, fingerprint=fingerprint))
-                            kept_count += 1
-                            if protected:
-                                protected_kept_count += 1
-                        else:
-                            duplicate_count += 1
+                    if keep:
+                        filename = f"candidate-{candidate_index:06d}.jpg"
+                        self._write_jpeg(temp_images_dir / filename, frame)
+                        recent_kept.append(KeptCandidate(candidate_index=candidate_index, fingerprint=fingerprint))
+                        kept_count += 1
+                        if protected:
+                            protected_kept_count += 1
+                    else:
+                        duplicate_count += 1
 
-                        payload = {
+                    payloads.append(
+                        {
                             "candidate_index": candidate_index,
                             "checkpoint_index": int(state["checkpoint_index"]),
                             "frame_index": current_frame_index,
                             "timestamp_seconds": float(state["timestamp_seconds"]),
                             "reason": str(state.get("reason") or "UNKNOWN"),
+                            "source_change_kind": str(state.get("source_change_kind") or "NONE"),
                             "protected": protected,
                             "kept": keep,
                             "image_filename": filename,
                             "duplicate_of_candidate_index": duplicate_of if not keep else None,
                             "duplicate_hash_distance": hash_distance,
                             "duplicate_mean_abs_difference": round(mean_difference, 4) if mean_difference is not None else None,
+                            "edge_density": round(edge_density, 6),
+                            "contrast_std": round(contrast_std, 6),
                         }
-                        manifest.write(json.dumps(payload, separators=(",", ":")) + "\n")
-                        candidate_index += 1
-                        pct = candidate_index / expected_count * 100.0
-                        progress(min(99.0, pct), f"Extracting screenshot candidates... {candidate_index:,}/{expected_count:,}")
+                    )
+                    candidate_index += 1
+                    pct = candidate_index / expected_count * 100.0
+                    progress(min(96.0, pct * 0.96), f"Extracting screenshot candidates... {candidate_index:,}/{expected_count:,}")
 
-                    current_frame_index += 1
+                current_frame_index += 1
 
-                if candidate_index != expected_count:
-                    raise AppError(ErrorCode.FRAME_SEQUENCE_MISMATCH, "Not every teaching checkpoint produced a screenshot candidate record.", 422)
+            if candidate_index != expected_count:
+                raise AppError(ErrorCode.FRAME_SEQUENCE_MISMATCH, "Not every teaching checkpoint produced a screenshot candidate record.", 422)
+
+            risk_count = self.mark_content_loss_risks(payloads)
+            progress(97.0, "Checking candidates for content-loss risk...")
+            with temp_manifest.open("w", encoding="utf-8") as manifest:
+                for payload in payloads:
+                    manifest.write(json.dumps(payload, separators=(",", ":")) + "\n")
                 manifest.flush()
                 os.fsync(manifest.fileno())
 
@@ -273,10 +323,12 @@ class ScreenshotCandidateService:
             summary = {
                 "video_id": video_id,
                 "status": "READY",
+                "pipeline_version": PIPELINE_VERSION,
                 "source_checkpoint_count": expected_count,
                 "kept_candidate_count": kept_count,
                 "duplicate_candidate_count": duplicate_count,
                 "protected_kept_count": protected_kept_count,
+                "content_loss_risk_count": risk_count,
                 "deduplication_conservative": True,
                 "filter_config": self.config.to_dict(),
                 "generated_at": utc_now_iso(),
