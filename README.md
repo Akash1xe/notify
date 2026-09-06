@@ -1,8 +1,8 @@
 # Notify — Lecture to PDF
 
-Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local copy, analyzes visual changes, detects stable teaching states, extracts screenshot candidates, and now builds a reviewable protected screenshot set before later transcript/topic/PDF stages.
+Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local copy, analyzes visual changes, detects stable teaching states, builds a protected trusted screenshot set, and now generates a timestamped local transcript aligned to those trusted screenshots.
 
-> Current milestone: **Phase 2.5 complete — candidate review + content protection hardening**.
+> Current milestone: **Phase 3.1 complete — local transcript generation + trusted screenshot alignment**.
 
 ## Current capabilities
 
@@ -15,7 +15,7 @@ Notify is a local-first lecture processing application. It accepts a YouTube lec
 - FFmpeg/ffprobe verification
 - Background preparation jobs and progress polling
 - Restart-safe prepared-video reuse
-- interrupted-job recovery, stale-temp cleanup, storage status, and local-copy deletion
+- Interrupted-job recovery, stale-temp cleanup, storage status, and local-copy deletion
 
 ### Phase 2.1 — frame timeline
 
@@ -53,51 +53,71 @@ Notify is a local-first lecture processing application. It accepts a YouTube lec
 
 ### Phase 2.5 — candidate review + content protection hardening
 
-- Adds visual-detail metrics to every candidate (`edge_density`, `contrast_std`)
-- Marks a completed candidate as `content_loss_risk` when:
-  - the following stable state comes from a `SCENE` replacement, or
-  - visual detail drops sharply afterwards
-- Candidate pipeline versioning invalidates older Phase 2.4 manifests so the new safety metadata is regenerated
-- Builds a separate, ordered **trusted screenshot set** without modifying or deleting the original candidate evidence
-- Default trusted selection keeps:
-  - normal dedup-retained screenshots
-  - transition-protected screenshots
-  - end-of-video/single-frame protected screenshots
-  - content-loss-risk screenshots, even when they were previously dedup-suppressed
-- Suppressed candidates remain previewable by restoring the exact original frame from `lecture.mp4` on demand
-- User can manually restore a suppressed candidate
-- User can manually suppress an ordinary retained candidate
-- Auto-protected candidates cannot be suppressed accidentally through the normal review action
-- Manual review decisions are persisted separately and the trusted image directory is rebuilt atomically
-- Review UI is paginated so long lectures do not load every candidate preview at once
+- Adds visual-detail metrics (`edge_density`, `contrast_std`)
+- Detects content-loss risk before scene replacement / major detail loss
+- Builds a separate ordered **trusted screenshot set**
+- Keeps original candidate evidence non-destructive and auditable
+- Allows manual restore of suppressed duplicates
+- Allows manual suppression of ordinary retained candidates
+- Prevents accidental suppression of auto-protected candidates
+- Rebuilds the trusted set atomically after review decisions
+
+### Phase 3.1 — local transcript + screenshot alignment
+
+- Uses **faster-whisper** locally; no custom model training is required
+- Extracts a standard mono 16 kHz WAV with FFmpeg
+- Default model: `small.en`
+- Default CPU compute mode: `int8`
+- Generates ordered timestamped transcript segments
+- Persists transcript independently from screenshot review state
+- Aligns every trusted screenshot to nearby teacher speech
+- Default alignment context:
+  - 6 seconds before screenshot timestamp
+  - 8 seconds after screenshot timestamp
+- Keeps silent screenshots even when no speech is nearby
+- Changing screenshot review decisions invalidates only screenshot/transcript alignment, not the expensive Whisper transcript
+- Background transcript jobs support progress polling, duplicate-job prevention, failure reporting, and restart recovery
+- The first local run may download the configured pretrained Whisper model
+
+## Why transcript and alignment are separate
+
+The raw transcript depends on the prepared lecture audio, while screenshot alignment depends on the current trusted screenshot set.
+
+```text
+lecture.mp4
+    ↓
+16 kHz mono audio
+    ↓
+faster-whisper
+    ↓
+timestamped transcript (cached)
+    ↓
+trusted screenshot timestamps
+    ↓
+screenshot ↔ nearby speech alignment
+```
+
+If you restore or suppress screenshots later:
+
+```text
+Trusted set changes
+      ↓
+Keep existing Whisper transcript
+      ↓
+Rebuild only screenshot alignment
+```
+
+This avoids repeating the expensive transcription stage.
 
 ## Content-safety philosophy
 
 When uncertain, Notify favors **keeping educational content** over aggressive deduplication.
 
-Example:
-
-```text
-Teacher finishes equation
-        ↓
-Screen is stable
-        ↓
-Candidate A
-        ↓
-Teacher changes slide / erases board
-        ↓
-Candidate B has much less detail or starts after SCENE
-        ↓
-Candidate A receives content-loss protection
-        ↓
-Candidate A remains in trusted set
-```
-
-A screenshot previously suppressed as a near-duplicate can therefore be restored automatically if later analysis shows that content may disappear after it.
+A screenshot is not considered unimportant simply because the teacher is silent near that frame. Visual equations, completed diagrams, code, or board content can remain in the trusted set without transcript text.
 
 ## Runtime storage
 
-A lecture that reaches Phase 2.5 can contain:
+A lecture that reaches Phase 3.1 can contain:
 
 ```text
 downloads/<video_id>/
@@ -113,46 +133,48 @@ downloads/<video_id>/
     ├── screenshot-candidates.jsonl
     ├── screenshot-candidates-summary.json
     ├── screenshots/
-    │   ├── candidate-000000.jpg
-    │   └── ...
+    │   └── candidate-*.jpg
     ├── candidate-review.json
     ├── trusted-screenshots.jsonl
     ├── trusted-screenshots-summary.json
-    └── trusted-screenshots/
-        ├── trusted-000000.jpg
-        └── ...
+    ├── trusted-screenshots/
+    │   └── trusted-*.jpg
+    ├── transcript-audio.wav
+    ├── transcript-segments.jsonl
+    ├── transcript-summary.json
+    ├── screenshot-transcript-map.jsonl
+    └── screenshot-transcript-map-summary.json
 ```
 
-### Original candidate manifest
+### Transcript segment record
 
-`screenshot-candidates.jsonl` remains the immutable analysis evidence for review. A record now includes information such as:
+`transcript-segments.jsonl` contains ordered records such as:
 
 ```json
 {
-  "candidate_index": 4,
-  "frame_index": 812,
-  "timestamp_seconds": 27.066667,
-  "reason": "STABLE_AFTER_CHANGE",
-  "source_change_kind": "SCENE",
-  "protected": false,
-  "kept": false,
-  "duplicate_of_candidate_index": 3,
-  "edge_density": 0.0342,
-  "contrast_std": 0.182,
-  "content_loss_risk": true,
-  "content_loss_reason": "SCENE_REPLACEMENT"
+  "segment_index": 18,
+  "start_seconds": 72.14,
+  "end_seconds": 78.42,
+  "text": "Now we calculate the middle index using low and high."
 }
 ```
 
-### Review state
+### Screenshot alignment record
 
-`candidate-review.json` stores only user review decisions plus the exact candidate-generation version they apply to. If screenshot candidates are regenerated, stale review decisions are not applied to unrelated/new candidates.
+`screenshot-transcript-map.jsonl` contains records such as:
 
-### Trusted set
-
-`trusted-screenshots.jsonl` and `trusted-screenshots/` contain the actual ordered image set that future transcript/topic/PDF stages should consume.
-
-The original candidate files and manifest are not destroyed when the trusted set changes.
+```json
+{
+  "trusted_index": 7,
+  "candidate_index": 9,
+  "frame_index": 2310,
+  "timestamp_seconds": 77.0,
+  "context_start_seconds": 71.0,
+  "context_end_seconds": 85.0,
+  "segment_indexes": [17, 18, 19],
+  "text": "Now we calculate the middle index using low and high..."
+}
+```
 
 ## Stack
 
@@ -168,6 +190,7 @@ The original candidate files and manifest are not destroyed when the trusted set
 - yt-dlp
 - OpenCV (`opencv-python-headless`)
 - NumPy
+- faster-whisper / CTranslate2
 - FFmpeg / ffprobe
 
 ## Requirements
@@ -202,6 +225,21 @@ uvicorn app.main:app --reload
 ```
 
 Backend: `http://localhost:8000`
+
+### Whisper configuration
+
+Defaults are chosen for an English lecture on a normal CPU:
+
+```text
+WHISPER_MODEL=small.en
+WHISPER_LANGUAGE=en
+WHISPER_DEVICE=cpu
+WHISPER_COMPUTE_TYPE=int8
+```
+
+They are optional environment variables. For another language, use a multilingual model such as `small` and change `WHISPER_LANGUAGE` accordingly.
+
+The first transcription run may need internet access once to download the selected pretrained model. After it is cached locally, transcription can reuse it.
 
 ## Frontend setup
 
@@ -243,11 +281,15 @@ Detect content-loss risk
     ↓
 Review retained + suppressed candidates
     ↓
-Restore/suppress ordinary candidates manually
+Build ordered trusted screenshot set
     ↓
-Protect risky candidates
+Extract 16 kHz mono audio
     ↓
-Build ordered trusted-screenshots set
+Generate timestamped faster-whisper transcript
+    ↓
+Align teacher speech to trusted screenshots
+    ↓
+TRANSCRIPT + SCREENSHOT CONTEXT READY
 ```
 
 ## Main API endpoints
@@ -269,6 +311,9 @@ Build ordered trusted-screenshots set
 | GET | `/api/analysis/{video_id}/candidate-review` | Initialize/read review + trusted set |
 | PUT | `/api/analysis/{video_id}/candidate-review/{candidate_index}` | Keep/restore/suppress a candidate |
 | GET | `/api/analysis/{video_id}/candidates/{candidate_index}/image` | Preview retained or suppressed candidate |
+| POST | `/api/analysis/transcript/start` | Start/reuse local transcription + alignment |
+| GET | `/api/analysis/transcript/jobs/{job_id}` | Poll transcript job |
+| GET | `/api/analysis/{video_id}/transcript` | Read transcript/alignment summaries |
 | GET | `/api/storage/status` | Local storage usage |
 | POST | `/api/storage/cleanup` | Clean stale temporary data |
 
@@ -280,27 +325,24 @@ GitHub Actions runs:
 - frontend TypeScript typecheck
 - Next.js production build
 
-Phase 2.5 tests cover:
+Phase 3.1 adds deterministic tests with a fake Whisper model so CI never downloads model weights. Tests verify:
 
-- scene-replacement protection
-- sharp visual-detail-drop protection
-- default restoration of a risk-protected dedup-suppressed candidate
-- manual restore of a normal suppressed candidate
-- manual suppression of an ordinary retained candidate
-- rejection of accidental suppression for an auto-protected candidate
-- trusted screenshot directory regeneration
+- timestamped transcript persistence
+- trusted screenshot ↔ nearby speech alignment
+- transcript cache validation against the source lecture
+- review changes trigger realignment without rerunning Whisper or audio extraction
 
 ## Not implemented yet
 
-- Whisper/transcript generation
-- topic segmentation
-- screenshot ↔ transcript/topic alignment
-- OCR/semantic importance analysis
+- semantic topic/section detection
+- OCR / screenshot text extraction
+- topic ↔ screenshot grouping
+- semantic importance ranking
 - full coverage verification pass
 - PDF generation
 
 ## Next milestone
 
-**Phase 3 — Transcript + Topic Detection foundation**
+**Phase 3.2 — Lecture Topic / Section Detection**
 
-The next stage should extract audio locally, generate timestamped transcript segments with a pretrained Whisper/faster-whisper model, and prepare topic boundaries that can later be aligned to the trusted screenshot set. No custom model training is required.
+The next stage will use the timestamped transcript plus trusted screenshot timing to identify coherent lecture sections, assign screenshots to those sections, and produce ordered topic groups without changing the original transcript or trusted screenshot evidence.
