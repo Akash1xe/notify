@@ -11,6 +11,8 @@ from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.storage_service import StorageService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
+from app.services.topic_detection_job_manager import TopicDetectionJobManager
+from app.services.topic_detection_service import TopicDetectionService
 from app.services.transcription_job_manager import TranscriptionJobManager
 from app.services.transcription_service import TranscriptionService
 from app.services.visual_change_job_manager import VisualChangeJobManager
@@ -80,3 +82,11 @@ def transcription_service(request: Request) -> TranscriptionService:
 
 def transcription_job_manager(request: Request) -> TranscriptionJobManager:
     return request.app.state.transcription_jobs
+
+
+def topic_detection_service(request: Request) -> TopicDetectionService:
+    return request.app.state.topic_detection
+
+
+def topic_detection_job_manager(request: Request) -> TopicDetectionJobManager:
+    return request.app.state.topic_detection_jobs
