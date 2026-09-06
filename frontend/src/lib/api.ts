@@ -8,9 +8,11 @@ import type {
   PrepareResponse,
   PreparedStatusResponse,
   StartFrameAnalysisResponse,
+  StartVisualChangeAnalysisResponse,
   StorageStatus,
   SystemStatus,
   ValidationResponse,
+  VisualChangeResponse,
 } from "@/types/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -82,6 +84,12 @@ export const api = {
   }),
   getAnalysisJob: (jobId: string) => apiFetch<AnalysisJobResponse>(`/api/analysis/jobs/${encodeURIComponent(jobId)}`, undefined, 10_000),
   getFrameTimeline: (videoId: string) => apiFetch<FrameTimelineResponse>(`/api/analysis/${encodeURIComponent(videoId)}/timeline`, undefined, 10_000),
+  startVisualChangeAnalysis: (videoId: string) => apiFetch<StartVisualChangeAnalysisResponse>("/api/analysis/changes/start", {
+    method: "POST",
+    body: JSON.stringify({ video_id: videoId }),
+  }),
+  getVisualChangeJob: (jobId: string) => apiFetch<AnalysisJobResponse>(`/api/analysis/changes/jobs/${encodeURIComponent(jobId)}`, undefined, 10_000),
+  getVisualChanges: (videoId: string) => apiFetch<VisualChangeResponse>(`/api/analysis/${encodeURIComponent(videoId)}/changes`, undefined, 10_000),
   getVideoStatus: (videoId: string) => apiFetch<PreparedStatusResponse>(`/api/video/${encodeURIComponent(videoId)}/status`),
   deleteLocalVideo: (videoId: string) => apiFetch<{ status: string; video_id: string }>(`/api/video/${encodeURIComponent(videoId)}/local`, { method: "DELETE" }),
   storageStatus: () => apiFetch<StorageStatus>("/api/storage/status"),
