@@ -6,6 +6,8 @@ from app.api.dependencies import (
     candidate_review_service,
     frame_analysis_job_manager,
     frame_timeline_service,
+    ocr_job_manager,
+    ocr_service,
     screenshot_candidate_job_manager,
     screenshot_candidate_service,
     teaching_state_job_manager,
@@ -25,10 +27,13 @@ from app.schemas.analysis import (
     FrameTimelineResponse,
     FrameTimelineSummary,
     LectureTopicResultResponse,
+    OcrResultResponse,
     ScreenshotCandidateResponse,
     ScreenshotCandidateSummary,
     StartFrameAnalysisRequest,
     StartFrameAnalysisResponse,
+    StartOcrEnrichmentRequest,
+    StartOcrEnrichmentResponse,
     StartScreenshotCandidateAnalysisRequest,
     StartScreenshotCandidateAnalysisResponse,
     StartTeachingStateAnalysisRequest,
@@ -50,6 +55,8 @@ from app.schemas.analysis import (
 from app.services.candidate_review_service import CandidateReviewService
 from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
 from app.services.frame_timeline_service import FrameTimelineService
+from app.services.ocr_job_manager import OcrJobManager
+from app.services.ocr_service import OcrService
 from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJobManager
 from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
@@ -152,6 +159,18 @@ def topic_detection_job_status(job_id: str, jobs: TopicDetectionJobManager = Dep
     return _job_response(jobs.get(job_id))
 
 
+@router.post("/ocr/start", response_model=StartOcrEnrichmentResponse)
+def start_ocr_enrichment(payload: StartOcrEnrichmentRequest, jobs: OcrJobManager = Depends(ocr_job_manager)) -> StartOcrEnrichmentResponse:
+    validate_video_id(payload.video_id)
+    job, reused = jobs.start(payload.video_id)
+    return StartOcrEnrichmentResponse(job_id=job.job_id, video_id=job.video_id, status=job.status, reused_existing=reused, message=job.message)
+
+
+@router.get("/ocr/jobs/{job_id}", response_model=AnalysisJobResponse)
+def ocr_enrichment_job_status(job_id: str, jobs: OcrJobManager = Depends(ocr_job_manager)) -> AnalysisJobResponse:
+    return _job_response(jobs.get(job_id))
+
+
 @router.get("/{video_id}/timeline", response_model=FrameTimelineResponse)
 def frame_timeline(video_id: str, timeline: FrameTimelineService = Depends(frame_timeline_service)) -> FrameTimelineResponse:
     validate_video_id(video_id)
@@ -227,3 +246,12 @@ def lecture_topics(video_id: str, topics: TopicDetectionService = Depends(topic_
     if not result:
         raise AppError(ErrorCode.TOPICS_NOT_FOUND, "Lecture topics have not been detected for the current transcript and trusted screenshot set.", 404)
     return LectureTopicResultResponse.model_validate(result)
+
+
+@router.get("/{video_id}/ocr", response_model=OcrResultResponse)
+def ocr_result(video_id: str, ocr: OcrService = Depends(ocr_service)) -> OcrResultResponse:
+    validate_video_id(video_id)
+    result = ocr.get_result(video_id)
+    if not result:
+        raise AppError(ErrorCode.OCR_RESULT_NOT_FOUND, "Screenshot OCR enrichment has not been generated for the current trusted screenshot/topic set.", 404)
+    return OcrResultResponse.model_validate(result)
