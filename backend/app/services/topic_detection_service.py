@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 from collections import Counter
@@ -47,10 +46,10 @@ class TopicDetectionService:
         self.review = review
 
     def _topics_path(self, video_id: str) -> Path:
-        return self.storage.analysis_dir(video_id) / "lecture-topics.jsonl"
+        return self.storage.lecture_topics_path(video_id)
 
     def _summary_path(self, video_id: str) -> Path:
-        return self.storage.analysis_dir(video_id) / "lecture-topics-summary.json"
+        return self.storage.lecture_topics_summary_path(video_id)
 
     @staticmethod
     def _read_json(path: Path) -> dict | None:
@@ -311,10 +310,12 @@ class TopicDetectionService:
 
         starts = [0] + [int(item["segment_index"]) for item in boundaries]
         ends = [index - 1 for index in starts[1:]] + [len(segments) - 1]
+        earliest_visual = min((float(record["timestamp_seconds"]) for record in trusted_records), default=float(segments[0]["start_seconds"]))
+        lecture_start = min(float(segments[0]["start_seconds"]), earliest_visual)
         topics: list[dict] = []
         for topic_index, (start_index, end_index) in enumerate(zip(starts, ends)):
             chunk = segments[start_index:end_index + 1]
-            start_seconds = float(chunk[0]["start_seconds"])
+            start_seconds = lecture_start if topic_index == 0 else float(chunk[0]["start_seconds"])
             end_seconds = float(chunk[-1]["end_seconds"])
             if topic_index + 1 < len(starts):
                 end_seconds = max(end_seconds, float(segments[starts[topic_index + 1]]["start_seconds"]))
