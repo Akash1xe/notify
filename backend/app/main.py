@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
+from app.services.candidate_review_service import CandidateReviewService
 from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
 from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
@@ -54,19 +55,11 @@ async def lifespan(app: FastAPI):
     analysis_jobs = FrameAnalysisJobManager(storage=storage, timeline=frame_timeline)
     visual_changes = VisualChangeService(storage=storage, prepared=prepared, timeline=frame_timeline)
     visual_change_jobs = VisualChangeJobManager(storage=storage, changes=visual_changes)
-    teaching_states = TeachingStateService(
-        storage=storage,
-        prepared=prepared,
-        timeline=frame_timeline,
-        changes=visual_changes,
-    )
+    teaching_states = TeachingStateService(storage=storage, prepared=prepared, timeline=frame_timeline, changes=visual_changes)
     teaching_state_jobs = TeachingStateJobManager(storage=storage, states=teaching_states)
-    screenshot_candidates = ScreenshotCandidateService(
-        storage=storage,
-        prepared=prepared,
-        states=teaching_states,
-    )
+    screenshot_candidates = ScreenshotCandidateService(storage=storage, prepared=prepared, states=teaching_states)
     screenshot_candidate_jobs = ScreenshotCandidateJobManager(storage=storage, candidates=screenshot_candidates)
+    candidate_review = CandidateReviewService(storage=storage, prepared=prepared, candidates=screenshot_candidates)
 
     app.state.storage = storage
     app.state.media = media
@@ -82,20 +75,18 @@ async def lifespan(app: FastAPI):
     app.state.teaching_state_jobs = teaching_state_jobs
     app.state.screenshot_candidates = screenshot_candidates
     app.state.screenshot_candidate_jobs = screenshot_candidate_jobs
+    app.state.candidate_review = candidate_review
 
-    logger.info(
-        "Notify backend ready. ffmpeg=%s ffprobe=%s recovered_jobs=%s",
-        bool(media.ffmpeg_path), bool(media.ffprobe_path), recovered,
-    )
+    logger.info("Notify backend ready. ffmpeg=%s ffprobe=%s recovered_jobs=%s", bool(media.ffmpeg_path), bool(media.ffprobe_path), recovered)
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="0.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 app.include_router(api_router)
@@ -109,10 +100,7 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 @app.exception_handler(Exception)
 async def unexpected_error_handler(_: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled API error", exc_info=exc)
-    return JSONResponse(
-        status_code=500,
-        content={"error": {"code": ErrorCode.INTERNAL_ERROR, "message": "The local processing service encountered an unexpected error."}},
-    )
+    return JSONResponse(status_code=500, content={"error": {"code": ErrorCode.INTERNAL_ERROR, "message": "The local processing service encountered an unexpected error."}})
 
 
 @app.get("/health")
