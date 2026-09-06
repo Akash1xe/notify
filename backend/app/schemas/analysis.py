@@ -65,6 +65,18 @@ class StartTranscriptionResponse(BaseModel):
     message: str
 
 
+class StartTopicDetectionRequest(BaseModel):
+    video_id: str
+
+
+class StartTopicDetectionResponse(BaseModel):
+    job_id: str
+    video_id: str
+    status: JobStatus
+    reused_existing: bool
+    message: str
+
+
 class AnalysisJobError(BaseModel):
     code: str
     message: str
@@ -252,3 +264,46 @@ class TranscriptResultResponse(BaseModel):
     status: str = "ready"
     transcript: TranscriptSummary
     alignment: ScreenshotTranscriptAlignmentSummary
+
+
+class LectureTopic(BaseModel):
+    topic_index: int
+    title: str
+    start_seconds: float
+    end_seconds: float
+    duration_seconds: float
+    segment_start_index: int | None = None
+    segment_end_index: int | None = None
+    segment_count: int
+    word_count: int
+    keywords: list[str]
+    boundary_reasons: list[str]
+    trusted_screenshot_indexes: list[int]
+    candidate_indexes: list[int]
+    screenshot_count: int
+
+
+class LectureTopicSummary(BaseModel):
+    video_id: str
+    status: str
+    pipeline_version: int
+    topic_count: int
+    transcript_segment_count: int
+    trusted_screenshot_count: int
+    assigned_screenshot_count: int
+    unassigned_screenshot_count: int
+    coverage_complete: bool
+    min_topic_duration_seconds: float
+    max_topic_duration_seconds: float
+    boundary_candidate_count: int
+    accepted_boundary_count: int
+    transcript_generated_at: str
+    alignment_generated_at: str
+    trusted_generated_at: str
+    generated_at: str
+
+
+class LectureTopicResultResponse(BaseModel):
+    status: str = "ready"
+    summary: LectureTopicSummary
+    topics: list[LectureTopic]
