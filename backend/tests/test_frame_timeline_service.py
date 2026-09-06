@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from app.services.frame_timeline_service import FrameTimelineService
+from app.services.frame_timeline_service import FrameTimelineService, TIMELINE_VERSION
 from app.services.storage_service import StorageService
 
 VIDEO_ID = "abc123xyz00"
@@ -27,13 +27,10 @@ class FakePreparedService:
 
     def get_prepared_video(self, video_id: str):
         assert video_id == VIDEO_ID
-        return SimpleNamespace(
-            local_video_path=self.path,
-            probe=SimpleNamespace(duration_seconds=3.0),
-        )
+        return SimpleNamespace(local_video_path=self.path, probe=SimpleNamespace(duration_seconds=3.0))
 
 
-def test_frame_timeline_is_persisted_and_reusable(tmp_path: Path) -> None:
+def test_frame_timeline_uses_metadata_without_persisting_every_frame(tmp_path: Path) -> None:
     storage = StorageService(tmp_path / "downloads", tmp_path / "temp", tmp_path / "output")
     storage.initialize()
     source = storage.prepared_video_path(VIDEO_ID)
@@ -47,9 +44,12 @@ def test_frame_timeline_is_persisted_and_reusable(tmp_path: Path) -> None:
     assert summary["width"] == 80
     assert summary["height"] == 60
     assert summary["fps"] > 0
+    assert summary["timeline_version"] == TIMELINE_VERSION
+    assert summary["metadata_only"] is True
     assert storage.frame_timeline_path(VIDEO_ID).exists()
     assert storage.frame_timeline_summary_path(VIDEO_ID).exists()
 
     lines = storage.frame_timeline_path(VIDEO_ID).read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 15
+    assert 1 <= len(lines) <= 2
     assert service.get_summary(VIDEO_ID) == summary
+    assert progress_events[-1][0] == 100.0
