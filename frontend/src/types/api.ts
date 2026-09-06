@@ -8,12 +8,15 @@ export type JobStatus =
   | "COMPARING_FRAMES"
   | "DETECTING_STATES"
   | "EXTRACTING_SCREENSHOTS"
+  | "EXTRACTING_AUDIO"
+  | "TRANSCRIBING"
+  | "ALIGNING_TRANSCRIPT"
   | "READY"
   | "FAILED"
   | "INTERRUPTED"
   | "CANCELLED";
 
-export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE" | "SCREENSHOT_CANDIDATE";
+export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE" | "SCREENSHOT_CANDIDATE" | "TRANSCRIPTION";
 
 export interface ApiErrorShape { error: { code: string; message: string } }
 export interface ValidationResponse { status: "valid"; video_id: string; normalized_url: string }
@@ -26,6 +29,7 @@ export interface StartFrameAnalysisResponse { job_id: string; video_id: string; 
 export interface StartVisualChangeAnalysisResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface StartTeachingStateAnalysisResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface StartScreenshotCandidateAnalysisResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
+export interface StartTranscriptionResponse { job_id: string; video_id: string; status: JobStatus; reused_existing: boolean; message: string }
 export interface AnalysisJobResponse extends JobResponse { job_type: JobType }
 
 export interface FrameTimelineSummary { video_id: string; status: string; frame_count: number; fps: number; width: number; height: number; duration_seconds: number; first_timestamp_seconds: number; last_timestamp_seconds: number; generated_at: string }
@@ -90,6 +94,39 @@ export interface TrustedScreenshotSummary {
 
 export interface CandidateReviewResponse { status: "ready"; summary: TrustedScreenshotSummary; candidates: CandidateReviewItem[] }
 export interface UpdateCandidateDecisionResponse { status: "ready"; summary: TrustedScreenshotSummary; candidate: CandidateReviewItem }
+
+export interface TranscriptSummary {
+  video_id: string;
+  status: string;
+  model_name: string;
+  requested_language: string;
+  detected_language: string;
+  language_probability: number;
+  duration_seconds: number;
+  segment_count: number;
+  word_count: number;
+  audio_sample_rate_hz: number;
+  generated_at: string;
+}
+
+export interface ScreenshotTranscriptAlignmentSummary {
+  video_id: string;
+  status: string;
+  trusted_screenshot_count: number;
+  aligned_screenshot_count: number;
+  unaligned_screenshot_count: number;
+  context_before_seconds: number;
+  context_after_seconds: number;
+  transcript_generated_at: string;
+  trusted_generated_at: string;
+  generated_at: string;
+}
+
+export interface TranscriptResultResponse {
+  status: "ready";
+  transcript: TranscriptSummary;
+  alignment: ScreenshotTranscriptAlignmentSummary;
+}
 
 export interface PreparedStatusResponse { video_id: string; status: "READY" | "NOT_PREPARED"; prepared: boolean; message: string; resolution?: string | null; duration_seconds?: number | null }
 export interface StorageStatus { prepared_video_count: number; downloads_size_bytes: number; temp_size_bytes: number; output_size_bytes: number; free_space_bytes: number }
