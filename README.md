@@ -1,209 +1,159 @@
 # Notify — Lecture to PDF
 
-Notify is a local-first application that turns a YouTube lecture into a coverage-verified PDF of useful teaching screenshots. The pipeline prepares the lecture locally, analyzes every frame transition, waits for stable teaching states, protects content before it disappears, builds a reviewed screenshot set, enriches it with transcript/topic/OCR context, audits for possible missed teaching content, and finally generates a downloadable PDF.
+Notify is a local-first application that turns a YouTube lecture into organized visual notes and a coverage-checked PDF. It preserves stable teaching states, protects content before erase/slide transitions, enriches screenshots with transcript/topic/OCR context, and generates the final PDF locally.
 
-> **Project status: Phase 1–6 complete. The end-to-end local lecture-to-PDF workflow is implemented.**
+> **Current status: core lecture-to-PDF workflow complete, with adaptive visual processing for practical long-lecture performance.**
 
-## Complete pipeline
+## Pipeline
 
 ```text
 YouTube URL
     ↓
-Validate URL + read metadata
+Validate + download/verify lecture.mp4
     ↓
-Download / verify lecture.mp4 locally
+Read source timing metadata (no full-frame timeline decode)
     ↓
-Build complete frame timeline
+Adaptive visual analysis
+    ├─ coarse whole-video scan (default 4 FPS, small frames)
+    ├─ identify/pad/merge activity windows
+    └─ fine scan only in activity windows (default 12 FPS)
     ↓
-Compare every consecutive frame pair
+Stable teaching-state detection
     ↓
-Detect stable teaching states
+Pre-transition / erase protection
     ↓
-Protect content before erase / strong transition
-    ↓
-Extract screenshot candidates
+Direct full-resolution checkpoint extraction
     ↓
 Conservative near-duplicate filtering
     ↓
-Manual candidate review
+Candidate review → trusted screenshots
     ↓
-Trusted screenshot set
+Raw faster-whisper transcript (can prewarm during visual scan)
     ↓
-Local faster-whisper transcript
+Screenshot ↔ speech alignment
     ↓
-Screenshot ↔ nearby speech alignment
-    ↓
-Lecture topic / section detection
+Topic detection
     ↓
 Local Tesseract OCR
     ↓
-Visible text + speech + topic enrichment
+Evidence-aware coverage verification
     ↓
-Fail-closed coverage verification
+Final PDF review, preview and download
+```
+
+## Why the visual pipeline is adaptive
+
+The original implementation decoded the complete source frame timeline and then compared every consecutive frame pair. A one-hour lecture can contain well over 100,000 source frames, even though most lecture time is visually static.
+
+Notify now avoids redundant work without blindly taking screenshots at fixed time intervals.
+
+```text
+Static lecture region
     ↓
-Final PDF review / ordering
+coarse samples only
+
+Potential writing / scrolling / slide change
     ↓
-Coverage-verified PDF preview + download
+open padded activity window
+    ↓
+fine temporal scan
+    ↓
+wait for stable state
+    ↓
+extract original-resolution checkpoint
 ```
 
-## Core safety rules
+The coarse pass is only a detector for where higher precision is required. Final screenshots are always extracted from the prepared source video, not from low-resolution detection frames.
 
-Notify is intentionally conservative about educational content.
+### Content-preservation safeguards
+
+Performance optimizations must not silently discard teaching content:
+
+- persistent local changes such as writing can open fine-analysis windows
+- a stable-anchor comparison detects cumulative writing even when each individual edit is small
+- activity windows are padded before and after detected activity
+- nearby windows are merged to avoid gaps during continuous teaching
+- synthetic quiet-gap evidence preserves stable states between separated activity windows
+- strong scene/structural transitions remain visible to the teaching-state detector
+- meaningful pre-transition states stay protected before erase/slide replacement
+- end-of-video fallback preserves unfinished final content
+- duplicate suppression remains conservative and protected evidence is never automatically removed
+
+## Performance metrics
+
+The visual-analysis result records and displays:
 
 ```text
-Writing still changing       → wait
-Stable meaningful state      → candidate
-Teacher pauses mid-solution  → candidate
-Important state before erase → protected candidate
-Near-identical image         → suppress conservatively
-OCR cannot read handwriting  → keep screenshot
-Coverage finds unresolved gap→ block PDF
+source_frame_count
+coarse_sample_count
+fine_sample_count
+analyzed_sample_count
+activity_window_count
+activity_seconds
+static_seconds_skipped
+estimated_frame_reduction_percent
+processing_wall_seconds
+analysis_real_time_factor
 ```
 
-A final PDF cannot bypass the trusted screenshot and coverage stages. Final PDF review may reorder pages, but it must contain **every trusted screenshot exactly once**. To remove or restore a screenshot, change it in candidate review; that changes the trusted set and causes dependent transcript/topic/OCR/coverage results to become stale and require regeneration.
+These are measurements, not hard runtime promises. Lecture activity and hardware vary. Static slide lectures should require much less fine analysis than continuous coding/whiteboard lectures.
 
-## Completed phases
-
-### Phase 1 — Local application and video preparation
-
-- Next.js + TypeScript + Tailwind frontend
-- FastAPI local backend
-- YouTube URL parsing, normalization and backend validation
-- yt-dlp metadata/accessibility inspection
-- Metadata preview
-- 720p-first local video preparation
-- FFmpeg/ffprobe verification
-- Background jobs and frontend polling
-- deterministic local storage
-- prepared-video reuse
-- stale temporary-workspace cleanup and restart recovery
-
-### Phase 2 — Visual teaching-state extraction
-
-#### 2.1 Frame timeline
-
-- Sequential OpenCV decoding
-- One frame at a time in memory
-- Ordered frame indexes and timestamps
-- Complete persisted timeline
-
-#### 2.2 Visual change detection
-
-- Compares every consecutive frame pair
-- Requires `N` frames to produce exactly `N - 1` comparisons
-- Classifies `NONE`, `LOCAL`, `STRUCTURAL`, and `SCENE` changes
-- Uses LAB color differences, changed-pixel area and edge changes
-- Does not prematurely discard local writing/annotation changes
-
-#### 2.3 Stable teaching states
-
-- Groups continuous writing/drawing activity
-- Waits for stability before normal checkpoint capture
-- Avoids capturing one image per written character
-- Preserves meaningful intermediate pauses
-- Protects content before strong transitions/erase events
-- End-of-video fallback preserves unfinished final content
-
-#### 2.4 Screenshot extraction and duplicate filtering
-
-- Resolves checkpoints to exact lecture frames
-- Saves high-quality screenshot candidates
-- Persists evidence even for duplicate-suppressed candidates
-- Near-duplicate suppression requires multiple visual signals
-- Protected checkpoints are never automatically removed
-
-#### 2.5 Candidate review and trusted set
-
-- Detects content-loss risk
-- Builds a separate ordered trusted screenshot set
-- Supports manual keep/restore/suppress decisions
-- Protected screenshots require explicit override before suppression
-- Original candidate evidence remains non-destructive
-
-### Phase 3 — Transcript and lecture structure
-
-#### 3.1 Local transcript + screenshot alignment
-
-- faster-whisper runs locally
-- FFmpeg extracts mono 16 kHz WAV
-- default model: `small.en`
-- default CPU compute type: `int8`
-- timestamped transcript segments
-- each trusted screenshot receives nearby speech context
-- default context window: about 6 seconds before / 8 seconds after
-- silent screenshots remain valid educational evidence
-- trusted-set changes rebuild alignment without unnecessarily rerunning an unchanged raw transcript
-
-#### 3.2 Lecture topic detection
-
-Deterministic local section detection combines:
-
-- speech gaps
-- vocabulary shifts
-- transition phrases such as `next`, `moving on`, and `finally`
-- strong visual transition evidence
-
-Every trusted screenshot must belong to exactly one section. Visual-only sections are supported when speech is sparse.
-
-### Phase 4 — OCR and screenshot content enrichment
-
-Local Tesseract OCR extracts:
-
-- visible text
-- line records
-- bounding boxes
-- word/line counts
-- confidence
-- no-text / low-confidence flags
-
-Preprocessing includes grayscale conversion, dark-screen inversion when useful, upscaling of smaller images, and CLAHE local contrast enhancement.
-
-Default settings:
+Default adaptive settings:
 
 ```text
-OCR_LANGUAGE=eng
-OCR_PSM=11
+ANALYSIS_COARSE_FPS=4
+ANALYSIS_FINE_FPS=12
+ANALYSIS_COARSE_WIDTH=320
+ANALYSIS_FINE_WIDTH=640
+ANALYSIS_STABLE_SECONDS=1.25
+ANALYSIS_PRE_WINDOW_PADDING_SECONDS=1.0
+ANALYSIS_POST_WINDOW_PADDING_SECONDS=2.0
+ANALYSIS_WINDOW_MERGE_GAP_SECONDS=2.0
 ```
 
-OCR is evidence, not authority:
+Sampling FPS is capped to the source FPS for low-frame-rate videos.
+
+## Transcript concurrency and caching
+
+Raw faster-whisper transcription depends only on the prepared source video and transcription configuration. Notify can prewarm that raw transcript while adaptive visual scanning runs.
+
+Changing the trusted screenshot set does **not** rerun Whisper. It only invalidates/rebuilds downstream screenshot-to-speech alignment and dependent stages.
+
+Default transcript settings:
 
 ```text
-OCR_NO_TEXT
-OCR_LOW_CONFIDENCE
+WHISPER_MODEL=small.en
+WHISPER_LANGUAGE=en
+WHISPER_DEVICE=cpu
+WHISPER_COMPUTE_TYPE=int8
 ```
 
-are uncertainty signals only. Handwriting, equations, diagrams, roots, fractions, integrals, arrows, code formatting and low-contrast board writing remain preserved even when OCR is weak.
+The first local transcription may download the configured pretrained faster-whisper model. Notify does not train a model.
 
-### Phase 5 — Coverage verification / missed-content detection
+## Coverage semantics
 
-Coverage verification is a fail-closed safety gate over the evidence created by the earlier phases.
+Coverage verification cross-checks visual events, stable checkpoints, protected candidates, trusted screenshots, transcript density, topics and OCR uncertainty.
 
-It checks:
-
-- strong scene/structural changes without a nearby trusted screenshot
-- stable teaching states absent from the trusted set
-- protected/content-loss candidates missing from the trusted set
-- long trusted-screenshot gaps with speech or visual activity
-- speech-dense gaps
-- unused stable states inside gaps
-- lecture topics without a trusted screenshot
-- OCR uncertainty
-
-Blocking findings include signals such as:
+Findings are separated by meaning:
 
 ```text
-UNCAPTURED_STRONG_VISUAL_CHANGE
-STABLE_STATE_NOT_IN_TRUSTED_SET
-PROTECTED_EVIDENCE_NOT_TRUSTED
-LONG_TRUSTED_SCREENSHOT_GAP
-SPEECH_DENSE_GAP
-UNUSED_STABLE_STATE_IN_GAP
-TOPIC_WITHOUT_TRUSTED_SCREENSHOT
+BLOCK
+  Confirmed high-risk evidence loss, such as protected evidence missing,
+  a topic without required trusted visual evidence, or an unresolved
+  destructive scene transition.
+
+REVIEW
+  Suspicious but unconfirmed windows, such as a long speech-dense gap
+  containing an unresolved stable state. These do not automatically prove
+  content was lost.
+
+WARNING
+  OCR uncertainty and similar non-destructive uncertainty.
 ```
 
-OCR uncertainty remains non-blocking.
+Duplicate-suppressed stable states and screenshots explicitly dismissed during candidate review are treated as represented evidence rather than repeatedly creating false blockers.
 
-The PDF gate is:
+The final PDF still fails closed for confirmed blockers:
 
 ```text
 blocking_finding_count == 0
@@ -211,102 +161,31 @@ blocking_finding_count == 0
 ready_for_pdf = true
 ```
 
-Any current upstream evidence change invalidates an old coverage approval.
+OCR uncertainty never removes a screenshot.
 
-### Phase 6 — Final PDF generator and review UI
-
-The final stage uses **ReportLab** locally to generate a real PDF only from a current coverage-approved trusted set.
-
-Features:
-
-- final page-order review
-- safe Up / Down reordering controls
-- reset to topic/timestamp order
-- every trusted screenshot required exactly once
-- optional cover page
-- optional lecture-topic divider pages
-- optional OCR + nearby-speech context captions
-- configurable screenshot JPEG quality
-- landscape A4 screenshot pages with aspect-ratio preservation
-- background PDF generation with progress polling
-- atomic PDF finalization
-- `%PDF-` output validation
-- inline browser PDF preview
-- download endpoint
-- stale PDF invalidation when trusted set, topics, coverage result, final ordering, or generation settings change
-- PDF-specific interrupted-job recovery messaging
-
-Default PDF settings:
+## Core safety rules
 
 ```text
-image_quality=92
-include_cover=true
-include_topic_dividers=true
-include_context=false
+Writing still changing       → wait
+Stable meaningful state      → candidate
+Meaningful intermediate pause→ candidate
+Important state before erase → protected candidate
+Near-identical image         → suppress conservatively
+OCR cannot read content      → keep screenshot
+Confirmed evidence loss      → block PDF
 ```
 
-Quality presets in the UI include standard, high/recommended, and original JPEG quality.
-
-## Runtime artifacts
-
-A fully processed lecture can contain:
-
-```text
-downloads/<video_id>/
-├── lecture.mp4
-├── metadata.json
-└── analysis/
-    ├── frame-timeline.jsonl
-    ├── frame-timeline-summary.json
-    ├── frame-differences.jsonl
-    ├── frame-differences-summary.json
-    ├── teaching-states.jsonl
-    ├── teaching-states-summary.json
-    ├── screenshot-candidates.jsonl
-    ├── screenshot-candidates-summary.json
-    ├── screenshots/
-    │   └── candidate-*.jpg
-    ├── candidate-review.json
-    ├── trusted-screenshots.jsonl
-    ├── trusted-screenshots-summary.json
-    ├── trusted-screenshots/
-    │   └── trusted-*.jpg
-    ├── transcript-audio.wav
-    ├── transcript-segments.jsonl
-    ├── transcript-summary.json
-    ├── screenshot-transcript-map.jsonl
-    ├── screenshot-transcript-map-summary.json
-    ├── lecture-topics.jsonl
-    ├── lecture-topics-summary.json
-    ├── screenshot-ocr.jsonl
-    ├── screenshot-ocr-summary.json
-    ├── screenshot-content.jsonl
-    ├── screenshot-content-summary.json
-    ├── topic-content.jsonl
-    ├── coverage-findings.jsonl
-    ├── coverage-summary.json
-    └── pdf-review.json
-
-output/<video_id>/
-├── lecture-notes.pdf
-└── pdf-manifest.json
-```
-
-Generated/downloaded runtime media is excluded from Git; only placeholder files keep runtime directories present in the repository.
+Final PDF review may reorder trusted screenshots but cannot silently omit one. Every current trusted screenshot is included exactly once.
 
 ## Stack
 
 ### Frontend
-
 - Next.js App Router
 - TypeScript
 - Tailwind CSS
 
 ### Backend
-
-- Python
-- FastAPI
-- Uvicorn
+- Python / FastAPI / Uvicorn
 - yt-dlp
 - OpenCV + NumPy
 - FFmpeg / ffprobe
@@ -314,15 +193,15 @@ Generated/downloaded runtime media is excluded from Git; only placeholder files 
 - Tesseract OCR
 - ReportLab
 
-No database, Redis, message broker, cloud OCR, hosted LLM, or custom-trained ML model is required for the current local application.
+No database, Redis, Kafka, cloud OCR, hosted LLM or paid API is required for the current local application.
 
 ## Local requirements
 
-Recommended:
+You need:
 
-- Node.js 20+
+- Node.js / npm
 - Python 3.11+
-- FFmpeg with `ffmpeg` and `ffprobe`
+- FFmpeg including `ffprobe`
 - Tesseract OCR 5+
 
 Verify system tools:
@@ -333,16 +212,21 @@ ffprobe -version
 tesseract --version
 ```
 
-On Windows, make `tesseract.exe` available on `PATH` or configure `TESSERACT_CMD` with the executable path.
+On Windows, if Tesseract is not on PATH, configure:
+
+```text
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+```
 
 ## Backend setup
 
 ```powershell
 cd backend
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
 Backend:
@@ -351,32 +235,19 @@ Backend:
 http://localhost:8000
 ```
 
-Optional backend configuration:
+Useful checks:
 
 ```text
-FRONTEND_ORIGIN=http://localhost:3000
-MAX_VIDEO_HEIGHT=720
-TEMP_RETENTION_HOURS=24
-MIN_FREE_SPACE_BYTES=536870912
-
-WHISPER_MODEL=small.en
-WHISPER_LANGUAGE=en
-WHISPER_DEVICE=cpu
-WHISPER_COMPUTE_TYPE=int8
-
-OCR_LANGUAGE=eng
-OCR_PSM=11
-TESSERACT_CMD=<optional full path to tesseract executable>
+http://localhost:8000/health
+http://localhost:8000/api/system/status
 ```
-
-The first real transcription may download the configured faster-whisper pretrained model. No model training is performed.
 
 ## Frontend setup
 
 ```powershell
 cd frontend
 npm install
-copy .env.example .env.local
+Copy-Item .env.example .env.local
 npm run dev
 ```
 
@@ -386,65 +257,53 @@ Frontend:
 http://localhost:3000
 ```
 
-Default frontend environment:
+Default frontend configuration:
 
 ```text
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-## Main API endpoints
+## Runtime artifacts
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/health` | Backend connectivity |
-| GET | `/api/system/status` | Local tool/storage capability status |
-| POST | `/api/video/validate` | Validate YouTube URL |
-| POST | `/api/video/metadata` | Read lecture metadata |
-| POST | `/api/video/prepare` | Prepare/reuse local lecture |
-| GET | `/api/jobs/{job_id}` | Poll video preparation |
-| POST | `/api/analysis/start` | Build/reuse frame timeline |
-| POST | `/api/analysis/changes/start` | Analyze visual changes |
-| POST | `/api/analysis/states/start` | Detect stable teaching states |
-| POST | `/api/analysis/candidates/start` | Extract screenshot candidates |
-| GET | `/api/analysis/{video_id}/candidate-review` | Read candidate/trusted state |
-| PUT | `/api/analysis/{video_id}/candidate-review/{candidate_index}` | Keep/restore/suppress candidate |
-| POST | `/api/analysis/transcript/start` | Generate transcript + alignment |
-| POST | `/api/analysis/topics/start` | Detect lecture sections |
-| POST | `/api/analysis/ocr/start` | OCR/enrich trusted screenshots |
-| POST | `/api/analysis/coverage/start` | Run fail-closed coverage audit |
-| GET | `/api/analysis/{video_id}/coverage` | Read current coverage result |
-| GET | `/api/pdf/{video_id}/review` | Read final coverage-approved PDF order |
-| PUT | `/api/pdf/{video_id}/review` | Save a full trusted-screenshot order |
-| POST | `/api/pdf/start` | Generate/reuse final PDF |
-| GET | `/api/pdf/jobs/{job_id}` | Poll PDF generation |
-| GET | `/api/pdf/{video_id}` | Read current PDF manifest |
-| GET | `/api/pdf/{video_id}/preview` | Preview PDF inline |
-| GET | `/api/pdf/{video_id}/download` | Download generated PDF |
-| GET | `/api/storage/status` | Local storage usage |
-| POST | `/api/storage/cleanup` | Remove stale temporary workspaces |
+A processed lecture uses local files such as:
 
-The analysis API also exposes result/job endpoints for each intermediate stage.
+```text
+downloads/<video_id>/
+├── lecture.mp4
+├── metadata.json
+└── analysis/
+    ├── frame-timeline.jsonl
+    ├── frame-timeline-summary.json
+    ├── adaptive-analysis-summary.json
+    ├── activity-windows.jsonl
+    ├── frame-differences.jsonl
+    ├── frame-differences-summary.json
+    ├── teaching-states.jsonl
+    ├── teaching-states-summary.json
+    ├── screenshot-candidates.jsonl
+    ├── screenshots/
+    ├── candidate-review.json
+    ├── trusted-screenshots.jsonl
+    ├── trusted-screenshots/
+    ├── transcript-audio.wav
+    ├── transcript-segments.jsonl
+    ├── transcript-summary.json
+    ├── screenshot-transcript-map.jsonl
+    ├── lecture-topics.jsonl
+    ├── screenshot-ocr.jsonl
+    ├── screenshot-content.jsonl
+    ├── coverage-findings.jsonl
+    ├── coverage-summary.json
+    └── pdf-review.json
 
-## Verification and CI
+output/<video_id>/
+├── lecture-notes.pdf
+└── pdf-manifest.json
+```
 
-GitHub Actions validates the repository with:
+`frame-differences.jsonl` is now sparse adaptive evidence, not one JSON record for every original consecutive source-frame pair.
 
-- Python 3.12 backend test suite
-- FFmpeg installation
-- Tesseract installation and version check
-- deterministic OCR tests
-- real Tesseract subprocess smoke test
-- coverage fail-closed tests
-- real ReportLab PDF generation tests using generated screenshot images
-- PDF `%PDF-` validation
-- PDF review completeness/invalidation tests
-- PDF interrupted-job recovery test
-- frontend TypeScript typecheck
-- Next.js production build
-
-The tests intentionally avoid downloading Whisper model weights in CI; transcription behavior is tested with deterministic substitutes while a normal local run uses faster-whisper.
-
-## Current end-to-end user flow
+## Current end-to-end flow
 
 ```text
 Paste YouTube URL
@@ -453,43 +312,54 @@ Analyze metadata
       ↓
 Prepare lecture
       ↓
-Build frame timeline
+Read video timing metadata
       ↓
-Visual change analysis
+Adaptive visual scan
       ↓
-Stable teaching-state detection
+Stable teaching states
       ↓
-Screenshot extraction
+Screenshot candidates
       ↓
 Candidate review / trusted set
       ↓
-Transcript generation
+Transcript alignment (raw transcript reused if prewarmed)
       ↓
-Lecture topic detection
+Topics
       ↓
-OCR enrichment
+OCR
       ↓
 Coverage verification
       ↓
-PDF gate passes
+Final page review
       ↓
-Final page review / ordering
-      ↓
-Generate Final PDF
-      ↓
-Preview + Download
+Generate / preview / download PDF
 ```
 
-## Limitations and optional future improvements
+## Verification
 
-The required Phase 1–6 pipeline is complete, but real-world lecture formats vary. Useful future improvements include:
+CI runs:
 
-- stronger handwriting/math-specific OCR
-- richer semantic importance ranking
-- more advanced recovery suggestions for coverage-blocked windows
-- drag-and-drop final page ordering
-- searchable text layer/bookmarks inside the PDF
-- broader multilingual presets
-- profiling/tuning on long lectures and different teaching styles
+- full Python backend test suite
+- FFmpeg availability in CI
+- Tesseract availability and OCR smoke tests
+- adaptive visual scanning tests with synthetic video
+- teaching-state and screenshot protection tests
+- transcript/topic/OCR/coverage/PDF tests
+- frontend TypeScript typecheck
+- Next.js production build
 
-No algorithm can guarantee that every arbitrary lecture will have zero missed educational content. Notify therefore uses conservative extraction, explicit review, evidence preservation and fail-closed coverage verification rather than claiming an absolute guarantee.
+The adaptive tests verify that static-heavy video analyzes substantially fewer samples than its source-frame count while still identifying activity regions.
+
+## Design principle
+
+Notify optimizes **redundant frames**, not meaningful teaching states.
+
+```text
+expensive analysis only where the lecture changes
++
+explicit protection around content loss
++
+conservative review and coverage evidence
+```
+
+That is the basis of the performance architecture.

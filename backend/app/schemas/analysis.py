@@ -115,6 +115,8 @@ class FrameTimelineSummary(BaseModel):
     first_timestamp_seconds: float
     last_timestamp_seconds: float
     generated_at: str
+    timeline_version: int | None = None
+    metadata_only: bool | None = None
 
 
 class FrameTimelineResponse(BaseModel):
@@ -140,6 +142,19 @@ class VisualChangeSummary(BaseModel):
     detector_config: dict[str, float | int]
     generated_at: str
     timeline_generated_at: str
+    analysis_engine_version: int | None = None
+    adaptive_sampling: bool | None = None
+    source_frame_count: int | None = None
+    coarse_sample_count: int | None = None
+    fine_sample_count: int | None = None
+    analyzed_sample_count: int | None = None
+    activity_window_count: int | None = None
+    activity_seconds: float | None = None
+    static_seconds_skipped: float | None = None
+    estimated_frame_reduction_percent: float | None = None
+    processing_wall_seconds: float | None = None
+    analysis_real_time_factor: float | None = None
+    adaptive_config: dict[str, float | int] | None = None
 
 
 class VisualChangeResponse(BaseModel):
@@ -164,6 +179,7 @@ class TeachingStateSummary(BaseModel):
     generated_at: str
     timeline_generated_at: str
     changes_generated_at: str
+    adaptive_source: bool | None = None
 
 
 class TeachingStateResponse(BaseModel):
@@ -184,6 +200,7 @@ class ScreenshotCandidateSummary(BaseModel):
     filter_config: dict[str, float | int]
     generated_at: str
     states_generated_at: str
+    direct_checkpoint_seeking: bool | None = None
 
 
 class ScreenshotCandidateResponse(BaseModel):

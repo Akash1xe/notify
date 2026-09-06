@@ -31,6 +31,15 @@ class FakeCapture:
     def isOpened(self) -> bool:
         return True
 
+    def set(self, prop, value):
+        # Test timestamps/frame indexes are 0,1,2. Preserve deterministic access
+        # while accepting the direct-seek calls made by the optimized extractor.
+        if prop == 1:  # CAP_PROP_POS_FRAMES
+            self.index = max(0, min(len(self.frames) - 1, int(value)))
+        elif prop == 0:  # CAP_PROP_POS_MSEC
+            self.index = max(0, min(len(self.frames) - 1, int(round(float(value) / 1000.0))))
+        return True
+
     def read(self):
         if self.index >= len(self.frames):
             return False, None
@@ -55,33 +64,11 @@ def test_scan_drops_normal_duplicate_but_keeps_protected_duplicate(tmp_path, mon
     video_path = storage.prepared_video_path(video_id)
     video_path.write_bytes(b"fake-video-for-stat-validation")
 
-    states_summary = {
-        "video_id": video_id,
-        "checkpoint_count": 3,
-        "generated_at": "2026-09-06T00:00:00+00:00",
-    }
+    states_summary = {"video_id": video_id, "checkpoint_count": 3, "generated_at": "2026-09-06T00:00:00+00:00"}
     state_records = [
-        {
-            "checkpoint_index": 0,
-            "frame_index": 0,
-            "timestamp_seconds": 0.0,
-            "reason": "INITIAL_STABLE",
-            "protected_before_transition": False,
-        },
-        {
-            "checkpoint_index": 1,
-            "frame_index": 1,
-            "timestamp_seconds": 1.0,
-            "reason": "STABLE_AFTER_CHANGE",
-            "protected_before_transition": False,
-        },
-        {
-            "checkpoint_index": 2,
-            "frame_index": 2,
-            "timestamp_seconds": 2.0,
-            "reason": "PRE_TRANSITION_PROTECTION",
-            "protected_before_transition": True,
-        },
+        {"checkpoint_index": 0, "frame_index": 0, "timestamp_seconds": 0.0, "reason": "INITIAL_STABLE", "protected_before_transition": False},
+        {"checkpoint_index": 1, "frame_index": 1, "timestamp_seconds": 1.0, "reason": "STABLE_AFTER_CHANGE", "protected_before_transition": False},
+        {"checkpoint_index": 2, "frame_index": 2, "timestamp_seconds": 2.0, "reason": "PRE_TRANSITION_PROTECTION", "protected_before_transition": True},
     ]
     states_path = storage.teaching_states_path(video_id)
     states_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,28 +77,18 @@ def test_scan_drops_normal_duplicate_but_keeps_protected_duplicate(tmp_path, mon
     frame = np.full((100, 160, 3), 235, dtype=np.uint8)
     frame[20:75, 60:65] = 10
     frames = [frame, frame.copy(), frame.copy()]
-    monkeypatch.setattr(
-        "app.services.screenshot_candidate_service.cv2.VideoCapture",
-        lambda _: FakeCapture(frames),
-    )
+    monkeypatch.setattr("app.services.screenshot_candidate_service.cv2.VideoCapture", lambda _: FakeCapture(frames))
 
-    service = ScreenshotCandidateService(
-        storage=storage,
-        prepared=FakePrepared(video_path),
-        states=FakeStates(states_summary),
-    )
+    service = ScreenshotCandidateService(storage=storage, prepared=FakePrepared(video_path), states=FakeStates(states_summary))
     summary = service.scan(video_id, lambda _progress, _message: None)
 
     assert summary["source_checkpoint_count"] == 3
     assert summary["kept_candidate_count"] == 2
     assert summary["duplicate_candidate_count"] == 1
     assert summary["protected_kept_count"] == 1
+    assert summary["direct_checkpoint_seeking"] is True
 
-    manifest = [
-        json.loads(line)
-        for line in storage.screenshot_candidates_path(video_id).read_text(encoding="utf-8").splitlines()
-        if line
-    ]
+    manifest = [json.loads(line) for line in storage.screenshot_candidates_path(video_id).read_text(encoding="utf-8").splitlines() if line]
     assert len(manifest) == 3
     assert manifest[0]["kept"] is True
     assert manifest[1]["kept"] is False

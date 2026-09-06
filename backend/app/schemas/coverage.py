@@ -36,8 +36,10 @@ class CoverageSummary(BaseModel):
     pipeline_version: int
     coverage_passed: bool
     ready_for_pdf: bool
+    pdf_status: str | None = None
     finding_count: int
     blocking_finding_count: int
+    review_finding_count: int = 0
     high_severity_count: int
     medium_severity_count: int
     warning_count: int
