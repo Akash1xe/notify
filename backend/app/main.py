@@ -15,6 +15,8 @@ from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
 from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
+from app.services.ocr_job_manager import OcrJobManager
+from app.services.ocr_service import OcrService
 from app.services.prepared_video_service import PreparedVideoService
 from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJobManager
 from app.services.screenshot_candidate_service import ScreenshotCandidateService
@@ -77,6 +79,15 @@ async def lifespan(app: FastAPI):
     transcription_jobs = TranscriptionJobManager(storage=storage, transcription=transcription)
     topic_detection = TopicDetectionService(storage=storage, transcription=transcription, review=candidate_review)
     topic_detection_jobs = TopicDetectionJobManager(storage=storage, topics=topic_detection)
+    ocr = OcrService(
+        storage=storage,
+        review=candidate_review,
+        topics=topic_detection,
+        tesseract_cmd=settings.tesseract_cmd,
+        language=settings.ocr_language,
+        psm=settings.ocr_psm,
+    )
+    ocr_jobs = OcrJobManager(storage=storage, ocr=ocr)
 
     app.state.storage = storage
     app.state.media = media
@@ -97,18 +108,21 @@ async def lifespan(app: FastAPI):
     app.state.transcription_jobs = transcription_jobs
     app.state.topic_detection = topic_detection
     app.state.topic_detection_jobs = topic_detection_jobs
+    app.state.ocr = ocr
+    app.state.ocr_jobs = ocr_jobs
 
     logger.info(
-        "Notify backend ready. ffmpeg=%s ffprobe=%s whisper_model=%s recovered_jobs=%s",
+        "Notify backend ready. ffmpeg=%s ffprobe=%s whisper_model=%s tesseract=%s recovered_jobs=%s",
         bool(media.ffmpeg_path),
         bool(media.ffprobe_path),
         settings.whisper_model,
+        ocr.available,
         recovered,
     )
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="0.8.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
