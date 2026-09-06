@@ -1,8 +1,8 @@
 # Notify — Lecture to PDF
 
-Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares a verified local video, detects stable teaching states, builds a protected screenshot set, generates a timestamped local transcript, and now organizes that transcript and the trusted screenshots into ordered lecture sections.
+Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local copy, detects stable teaching states, builds a protected screenshot set, generates a timestamped local transcript, groups the lecture into sections, and now extracts visible screenshot text with local OCR.
 
-> Current milestone: **Phase 3.2 complete — lecture topic / section detection**.
+> Current milestone: **Phase 4 complete — OCR + screenshot content enrichment**.
 
 ## Current pipeline
 
@@ -36,6 +36,12 @@ Trusted screenshot ↔ nearby speech alignment
 Detect coherent lecture sections
     ↓
 Assign every trusted screenshot to one section
+    ↓
+Tesseract OCR over every trusted screenshot
+    ↓
+Visible text + nearby speech + topic context
+    ↓
+ENRICHED TRUSTED SCREENSHOT SET
 ```
 
 ## Completed milestones
@@ -104,60 +110,163 @@ Assign every trusted screenshot to one section
 
 ### Phase 3.2 — lecture topic / section detection
 
-Topic detection is deterministic and local. It does not require an external LLM.
-
-Boundary evidence combines:
+Topic detection is deterministic and local. It combines:
 
 - meaningful speech gaps
 - transcript vocabulary shifts
-- explicit transition phrases such as "next", "moving on", or "finally"
+- explicit transition phrases such as `next`, `moving on`, or `finally`
 - strong visual section transitions from screenshot provenance
 
-The detector also applies section-duration constraints so normal sentence changes do not become dozens of tiny topics.
-
-Current defaults:
+Current section-duration defaults:
 
 - minimum normal section duration: about **45 seconds**
 - maximum section duration before a forced split: about **5 minutes**
 
-For each section Notify persists:
+Every trusted screenshot must be assigned to exactly one section. Coverage fails closed if this is not true. Visual-only sections are supported when speech is sparse.
 
-- ordered topic index
-- locally derived title
-- start/end timestamps
-- transcript segment range
-- word count
-- top keywords
-- boundary reasons
-- trusted screenshot indexes
-- original candidate indexes
-- screenshot count
+### Phase 4 — OCR + screenshot content enrichment
 
-Coverage fails closed unless every trusted screenshot is assigned to a section.
+OCR is local and uses the **Tesseract** system executable directly. No cloud OCR service and no custom model training are required.
 
-If a lecture contains trusted visual content but little/no detected speech, Notify can create visual-only sections rather than deleting those screenshots.
+For every trusted screenshot Notify now stores:
 
-## Topic detection example
+- detected visible text
+- OCR line records
+- per-line bounding boxes
+- line confidence
+- screenshot mean OCR confidence
+- OCR word/line counts
+- whether text was detected
+- whether recognized text is low-confidence
+
+Before OCR, Notify applies conservative preprocessing:
+
+- grayscale conversion
+- dark-screen inversion when appropriate
+- upscaling for smaller screenshots
+- local contrast enhancement with CLAHE
+
+Default OCR settings:
 
 ```text
-0:00  Binary Search Introduction
-        screenshots 0, 1
-
-1:05  Search Space And Mid Calculation
-        screenshots 2, 3, 4
-
-3:10  Moving Low And High
-        screenshots 5, 6
-
-5:40  Time Complexity And Logarithmic Growth
-        screenshots 7, 8
+OCR_LANGUAGE=eng
+OCR_PSM=11
 ```
 
-The titles are heuristic local labels. The original transcript and screenshot evidence remain unchanged and can be enriched later by OCR/semantic processing.
+`PSM 11` is used as a practical sparse-text default for lecture slides, boards, editors, diagrams, and mixed-layout screens.
+
+The current low-confidence marker is approximately:
+
+```text
+mean OCR confidence < 55
+```
+
+This is a review/coverage signal only. It does not remove screenshots.
+
+## OCR is evidence, not authority
+
+A critical project rule is:
+
+```text
+OCR says no text
+       ≠
+screenshot is unimportant
+```
+
+Tesseract is useful for printed slide text, editor text, headings, and many code screens. It can be weaker on:
+
+- handwriting
+- mathematical notation
+- roots/fractions/integrals
+- dense equations
+- diagrams
+- arrows and geometric notation
+- stylized fonts
+- low-contrast board writing
+
+Therefore a trusted screenshot with empty or poor OCR remains in the trusted set. Later coverage verification uses OCR as one signal alongside visual-change history, protection flags, transcript context, and topic coverage.
+
+## Separate OCR and enrichment caches
+
+Raw OCR depends on the trusted screenshot set:
+
+```text
+trusted screenshots
+      ↓
+Tesseract OCR
+      ↓
+screenshot-ocr.jsonl
+```
+
+Content enrichment additionally depends on the current topics/alignment:
+
+```text
+raw OCR
+   +
+nearby speech
+   +
+lecture topic
+   ↓
+screenshot-content.jsonl
+```
+
+Therefore:
+
+```text
+Topic grouping changes
+       ↓
+Keep unchanged raw OCR
+       ↓
+Rebuild only screenshot/topic/speech enrichment
+```
+
+If the trusted screenshot set changes, raw OCR is invalidated and recomputed for the new trusted set.
+
+## Enriched screenshot record
+
+A persisted screenshot enrichment is conceptually:
+
+```json
+{
+  "trusted_index": 7,
+  "candidate_index": 9,
+  "frame_index": 2310,
+  "timestamp_seconds": 77.0,
+  "topic_index": 2,
+  "topic_title": "Binary Search Mid Calculation",
+  "visible_text": "mid = low + (high - low) / 2",
+  "nearby_speech": "Now calculate the middle index using low and high.",
+  "combined_context": "mid = low + (high - low) / 2\n\nNow calculate the middle index using low and high.",
+  "ocr_mean_confidence": 88.4,
+  "ocr_word_count": 8,
+  "coverage_flags": []
+}
+```
+
+Possible coverage flags currently include:
+
+```text
+OCR_NO_TEXT
+OCR_LOW_CONFIDENCE
+NO_NEARBY_SPEECH
+```
+
+These flags identify uncertainty; they do not delete evidence.
+
+## Topic-level visual enrichment
+
+Each lecture topic also receives lightweight visual-text statistics:
+
+- trusted screenshot count
+- screenshots with OCR text
+- OCR word count
+- common visual keywords
+
+This gives later coverage verification both spoken and visible topic evidence.
 
 ## Runtime storage
 
-A lecture that reaches Phase 3.2 can contain:
+A lecture that reaches Phase 4 can contain:
 
 ```text
 downloads/<video_id>/
@@ -185,49 +294,13 @@ downloads/<video_id>/
     ├── screenshot-transcript-map.jsonl
     ├── screenshot-transcript-map-summary.json
     ├── lecture-topics.jsonl
-    └── lecture-topics-summary.json
+    ├── lecture-topics-summary.json
+    ├── screenshot-ocr.jsonl
+    ├── screenshot-ocr-summary.json
+    ├── screenshot-content.jsonl
+    ├── screenshot-content-summary.json
+    └── topic-content.jsonl
 ```
-
-A topic record is conceptually:
-
-```json
-{
-  "topic_index": 2,
-  "title": "Time complexity and logarithmic growth",
-  "start_seconds": 301.5,
-  "end_seconds": 420.2,
-  "segment_start_index": 48,
-  "segment_end_index": 66,
-  "keywords": ["complexity", "logarithmic", "binary", "search"],
-  "boundary_reasons": ["TRANSITION_PHRASE", "VOCABULARY_SHIFT"],
-  "trusted_screenshot_indexes": [7, 8],
-  "screenshot_count": 2
-}
-```
-
-## Why data layers remain separate
-
-```text
-lecture.mp4
-    ↓
-visual evidence
-    ↓
-trusted screenshots
-
-lecture.mp4
-    ↓
-audio
-    ↓
-raw timestamped transcript
-
-trusted screenshots + transcript
-    ↓
-alignment
-    ↓
-ordered topic groups
-```
-
-Changing a screenshot review decision does not destroy or regenerate the raw transcript. Topic results are invalidated and rebuilt only when their transcript/alignment/trusted-set dependencies change.
 
 ## Stack
 
@@ -247,27 +320,31 @@ Changing a screenshot review decision does not destroy or regenerate the raw tra
 - NumPy
 - faster-whisper / CTranslate2
 - FFmpeg / ffprobe
+- Tesseract OCR
 
-## Requirements
+## Local requirements
 
-Recommended locally:
+Recommended:
 
 - Node.js 20+
 - Python 3.11+
 - FFmpeg with `ffmpeg` and `ffprobe`
+- Tesseract OCR 5+
 
-### Windows FFmpeg
-
-```powershell
-winget install Gyan.FFmpeg
-```
-
-Then verify:
+Verify the media tools:
 
 ```powershell
 ffmpeg -version
 ffprobe -version
 ```
+
+Verify OCR:
+
+```powershell
+tesseract --version
+```
+
+On Windows, install Tesseract 5 and either make `tesseract.exe` available on `PATH` or set `TESSERACT_CMD` to its full executable path.
 
 ## Backend setup
 
@@ -279,18 +356,33 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Backend: `http://localhost:8000`
-
-### Whisper configuration
+Backend:
 
 ```text
+http://localhost:8000
+```
+
+### Optional backend configuration
+
+```text
+FRONTEND_ORIGIN=http://localhost:3000
+MAX_VIDEO_HEIGHT=720
+TEMP_RETENTION_HOURS=24
+MIN_FREE_SPACE_BYTES=536870912
+
 WHISPER_MODEL=small.en
 WHISPER_LANGUAGE=en
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
+
+OCR_LANGUAGE=eng
+OCR_PSM=11
+TESSERACT_CMD=<optional full path to tesseract executable>
 ```
 
-The first real transcription may need internet access once to download the selected pretrained model. Afterwards the local model cache can be reused.
+`TESSERACT_CMD` is optional when `tesseract` is already available on `PATH`.
+
+For multilingual OCR, install the corresponding Tesseract language data and change `OCR_LANGUAGE`.
 
 ## Frontend setup
 
@@ -301,7 +393,11 @@ copy .env.example .env.local
 npm run dev
 ```
 
-Frontend: `http://localhost:3000`
+Frontend:
+
+```text
+http://localhost:3000
+```
 
 Default frontend environment:
 
@@ -309,48 +405,130 @@ Default frontend environment:
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-## Topic API
+## Main API endpoints
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/api/analysis/topics/start` | Start/reuse lecture topic detection |
-| GET | `/api/analysis/topics/jobs/{job_id}` | Poll topic detection |
-| GET | `/api/analysis/{video_id}/topics` | Read ordered topic groups |
-
-The existing transcript endpoints remain:
-
-| Method | Endpoint | Purpose |
-|---|---|---|
+| GET | `/health` | Backend connectivity |
+| GET | `/api/system/status` | FFmpeg/ffprobe/Tesseract/storage capability status |
+| POST | `/api/video/metadata` | Validate and read YouTube metadata |
+| POST | `/api/video/prepare` | Prepare/reuse local lecture |
+| GET | `/api/jobs/{job_id}` | Poll video preparation |
+| POST | `/api/analysis/start` | Build/reuse frame timeline |
+| GET | `/api/analysis/{video_id}/timeline` | Frame timeline summary |
+| POST | `/api/analysis/changes/start` | Analyze visual changes |
+| GET | `/api/analysis/{video_id}/changes` | Visual-change summary |
+| POST | `/api/analysis/states/start` | Detect stable teaching states |
+| GET | `/api/analysis/{video_id}/states` | Teaching-state summary |
+| POST | `/api/analysis/candidates/start` | Extract screenshot candidates |
+| GET | `/api/analysis/{video_id}/candidates` | Candidate summary |
+| GET | `/api/analysis/{video_id}/candidate-review` | Review/trusted screenshot state |
+| PUT | `/api/analysis/{video_id}/candidate-review/{candidate_index}` | Keep/restore/suppress candidate |
+| GET | `/api/analysis/{video_id}/candidates/{candidate_index}/image` | Candidate preview |
 | POST | `/api/analysis/transcript/start` | Generate/reuse transcript + alignment |
-| GET | `/api/analysis/transcript/jobs/{job_id}` | Poll transcription |
-| GET | `/api/analysis/{video_id}/transcript` | Read transcript/alignment summary |
+| GET | `/api/analysis/transcript/jobs/{job_id}` | Poll transcript job |
+| GET | `/api/analysis/{video_id}/transcript` | Transcript/alignment summary |
+| POST | `/api/analysis/topics/start` | Detect lecture sections |
+| GET | `/api/analysis/topics/jobs/{job_id}` | Poll topic job |
+| GET | `/api/analysis/{video_id}/topics` | Ordered topic result |
+| POST | `/api/analysis/ocr/start` | OCR and enrich trusted screenshots |
+| GET | `/api/analysis/ocr/jobs/{job_id}` | Poll OCR job |
+| GET | `/api/analysis/{video_id}/ocr` | OCR/enrichment summary |
+| GET | `/api/storage/status` | Local storage usage |
+| POST | `/api/storage/cleanup` | Remove stale temporary workspaces |
 
 ## Verification
 
-GitHub Actions runs:
+GitHub Actions currently performs:
 
-- backend automated tests on Python 3.12 with FFmpeg
+- Python 3.12 backend tests
+- FFmpeg installation
+- Tesseract OCR installation + `tesseract --version`
+- deterministic OCR service tests with a fake OCR engine
+- a real Tesseract smoke test against a generated high-contrast lecture image
 - frontend TypeScript typecheck
 - Next.js production build
 
-Phase 3.2 tests verify:
+OCR-specific tests cover:
 
-- coherent section splitting from transcript/visual evidence
-- transition phrase + vocabulary-shift boundaries
-- every trusted screenshot is assigned exactly once
-- topic result cache is tied to transcript, alignment, and trusted-set versions
-- changing the trusted screenshot version invalidates topics without changing the raw transcript
+- full trusted-screenshot OCR coverage
+- text/no-text classification
+- low-confidence classification
+- TSV line/bounding-box parsing
+- visible-text topic keywords
+- screenshot + speech + topic enrichment
+- topic changes reuse cached raw OCR
+- trusted screenshot changes invalidate raw OCR
+- actual Tesseract subprocess recognition path
+
+## Current user flow
+
+```text
+Paste YouTube URL
+      ↓
+Prepare lecture
+      ↓
+Build frame timeline
+      ↓
+Visual change analysis
+      ↓
+Stable teaching-state detection
+      ↓
+Screenshot extraction
+      ↓
+Candidate review / protected trusted set
+      ↓
+Transcript generation
+      ↓
+Lecture topic detection
+      ↓
+Enrich Screenshot Content
+      ↓
+Tesseract OCR
+      ↓
+Visible text + nearby speech + topic context
+      ↓
+OCR ENRICHMENT READY
+```
 
 ## Not implemented yet
 
-- OCR / screenshot text extraction
-- transcript + OCR semantic enrichment
-- semantic importance/ranking
-- final coverage-verification pass
-- PDF generation
+- full lecture coverage verification/recheck pass
+- OCR specifically trained for handwriting or mathematical notation
+- semantic importance ranking
+- final PDF generation
+- final PDF review/export UI
 
 ## Next milestone
 
-**Phase 4 — OCR + Screenshot Content Enrichment foundation**
+**Phase 5 — Coverage Verification / Missed-Content Detection**
 
-The next stage should extract visible text from trusted screenshots locally, preserve equations/code/board text where practical, and combine screenshot text with transcript/topic context before the final coverage and PDF stages.
+This is the next critical safety stage before PDF generation.
+
+It will use the evidence already produced:
+
+```text
+complete frame timeline
+        +
+visual change history
+        +
+stable-state checkpoints
+        +
+protected screenshot candidates
+        +
+trusted screenshots
+        +
+transcript
+        +
+topic coverage
+        +
+OCR/visual-text uncertainty
+        ↓
+coverage audit
+        ↓
+identify suspicious gaps / possible missed teaching content
+        ↓
+recheck those time windows conservatively
+```
+
+Only after the coverage pass is trusted should the application move to final PDF generation.
