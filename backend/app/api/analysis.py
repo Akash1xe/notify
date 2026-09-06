@@ -10,6 +10,8 @@ from app.api.dependencies import (
     screenshot_candidate_service,
     teaching_state_job_manager,
     teaching_state_service,
+    transcription_job_manager,
+    transcription_service,
     visual_change_job_manager,
     visual_change_service,
 )
@@ -28,10 +30,13 @@ from app.schemas.analysis import (
     StartScreenshotCandidateAnalysisResponse,
     StartTeachingStateAnalysisRequest,
     StartTeachingStateAnalysisResponse,
+    StartTranscriptionRequest,
+    StartTranscriptionResponse,
     StartVisualChangeAnalysisRequest,
     StartVisualChangeAnalysisResponse,
     TeachingStateResponse,
     TeachingStateSummary,
+    TranscriptResultResponse,
     UpdateCandidateDecisionRequest,
     UpdateCandidateDecisionResponse,
     VisualChangeResponse,
@@ -44,6 +49,8 @@ from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJob
 from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
+from app.services.transcription_job_manager import TranscriptionJobManager
+from app.services.transcription_service import TranscriptionService
 from app.services.visual_change_job_manager import VisualChangeJobManager
 from app.services.visual_change_service import VisualChangeService
 from app.utils.youtube_url import validate_video_id
@@ -114,6 +121,18 @@ def screenshot_candidate_job_status(job_id: str, jobs: ScreenshotCandidateJobMan
     return _job_response(jobs.get(job_id))
 
 
+@router.post("/transcript/start", response_model=StartTranscriptionResponse)
+def start_transcription(payload: StartTranscriptionRequest, jobs: TranscriptionJobManager = Depends(transcription_job_manager)) -> StartTranscriptionResponse:
+    validate_video_id(payload.video_id)
+    job, reused = jobs.start(payload.video_id)
+    return StartTranscriptionResponse(job_id=job.job_id, video_id=job.video_id, status=job.status, reused_existing=reused, message=job.message)
+
+
+@router.get("/transcript/jobs/{job_id}", response_model=AnalysisJobResponse)
+def transcription_job_status(job_id: str, jobs: TranscriptionJobManager = Depends(transcription_job_manager)) -> AnalysisJobResponse:
+    return _job_response(jobs.get(job_id))
+
+
 @router.get("/{video_id}/timeline", response_model=FrameTimelineResponse)
 def frame_timeline(video_id: str, timeline: FrameTimelineService = Depends(frame_timeline_service)) -> FrameTimelineResponse:
     validate_video_id(video_id)
@@ -164,12 +183,19 @@ def update_candidate_review(
     review: CandidateReviewService = Depends(candidate_review_service),
 ) -> UpdateCandidateDecisionResponse:
     validate_video_id(video_id)
-    return UpdateCandidateDecisionResponse.model_validate(
-        review.update_decision(video_id, candidate_index, payload.selected, force=payload.force)
-    )
+    return UpdateCandidateDecisionResponse.model_validate(review.update_decision(video_id, candidate_index, payload.selected, force=payload.force))
 
 
 @router.get("/{video_id}/candidates/{candidate_index}/image")
 def candidate_image(video_id: str, candidate_index: int, review: CandidateReviewService = Depends(candidate_review_service)) -> Response:
     validate_video_id(video_id)
     return Response(content=review.preview_bytes(video_id, candidate_index), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/{video_id}/transcript", response_model=TranscriptResultResponse)
+def transcript_result(video_id: str, transcription: TranscriptionService = Depends(transcription_service)) -> TranscriptResultResponse:
+    validate_video_id(video_id)
+    result = transcription.get_result(video_id)
+    if not result:
+        raise AppError(ErrorCode.TRANSCRIPT_NOT_FOUND, "A valid timestamped transcript and screenshot alignment do not exist yet.", 404)
+    return TranscriptResultResponse.model_validate(result)
