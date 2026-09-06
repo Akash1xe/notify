@@ -41,6 +41,18 @@ class StartTeachingStateAnalysisResponse(BaseModel):
     message: str
 
 
+class StartScreenshotCandidateAnalysisRequest(BaseModel):
+    video_id: str
+
+
+class StartScreenshotCandidateAnalysisResponse(BaseModel):
+    job_id: str
+    video_id: str
+    status: JobStatus
+    reused_existing: bool
+    message: str
+
+
 class AnalysisJobError(BaseModel):
     code: str
     message: str
@@ -121,3 +133,21 @@ class TeachingStateSummary(BaseModel):
 class TeachingStateResponse(BaseModel):
     status: str = "ready"
     states: TeachingStateSummary
+
+
+class ScreenshotCandidateSummary(BaseModel):
+    video_id: str
+    status: str
+    source_checkpoint_count: int
+    kept_candidate_count: int
+    duplicate_candidate_count: int
+    protected_kept_count: int
+    deduplication_conservative: bool
+    filter_config: dict[str, float | int]
+    generated_at: str
+    states_generated_at: str
+
+
+class ScreenshotCandidateResponse(BaseModel):
+    status: str = "ready"
+    candidates: ScreenshotCandidateSummary
