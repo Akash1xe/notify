@@ -20,6 +20,10 @@ class FrameAnalysisJobManager:
         self._active_by_video: dict[str, str] = {}
         self._lock = threading.RLock()
 
+    def active_job_ids(self) -> list[str]:
+        with self._lock:
+            return [job_id for job_id, job in self._jobs.items() if job.status.transient]
+
     def _new_job(self, video_id: str, status: JobStatus, progress: float, message: str) -> JobRecord:
         now = utc_now_iso()
         return JobRecord(
