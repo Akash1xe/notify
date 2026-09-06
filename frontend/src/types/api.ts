@@ -6,12 +6,13 @@ export type JobStatus =
   | "FINALIZING"
   | "SCANNING_FRAMES"
   | "COMPARING_FRAMES"
+  | "DETECTING_STATES"
   | "READY"
   | "FAILED"
   | "INTERRUPTED"
   | "CANCELLED";
 
-export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE";
+export type JobType = "PREPARATION" | "FRAME_TIMELINE" | "VISUAL_CHANGE" | "TEACHING_STATE";
 
 export interface ApiErrorShape {
   error: {
@@ -81,6 +82,14 @@ export interface StartVisualChangeAnalysisResponse {
   message: string;
 }
 
+export interface StartTeachingStateAnalysisResponse {
+  job_id: string;
+  video_id: string;
+  status: JobStatus;
+  reused_existing: boolean;
+  message: string;
+}
+
 export interface AnalysisJobResponse extends JobResponse {
   job_type: JobType;
 }
@@ -126,6 +135,30 @@ export interface VisualChangeSummary {
 export interface VisualChangeResponse {
   status: "ready";
   changes: VisualChangeSummary;
+}
+
+export interface TeachingStateSummary {
+  video_id: string;
+  status: string;
+  checkpoint_count: number;
+  initial_stable_count: number;
+  stable_after_change_count: number;
+  pre_transition_protection_count: number;
+  end_of_video_fallback_count: number;
+  single_frame_count: number;
+  first_checkpoint_timestamp_seconds: number;
+  last_checkpoint_timestamp_seconds: number;
+  coverage_complete: boolean;
+  source_pair_count: number;
+  detector_config: Record<string, number>;
+  generated_at: string;
+  timeline_generated_at: string;
+  changes_generated_at: string;
+}
+
+export interface TeachingStateResponse {
+  status: "ready";
+  states: TeachingStateSummary;
 }
 
 export interface PreparedStatusResponse {
