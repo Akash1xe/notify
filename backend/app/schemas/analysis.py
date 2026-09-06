@@ -138,10 +138,12 @@ class TeachingStateResponse(BaseModel):
 class ScreenshotCandidateSummary(BaseModel):
     video_id: str
     status: str
+    pipeline_version: int
     source_checkpoint_count: int
     kept_candidate_count: int
     duplicate_candidate_count: int
     protected_kept_count: int
+    content_loss_risk_count: int
     deduplication_conservative: bool
     filter_config: dict[str, float | int]
     generated_at: str
@@ -151,3 +153,57 @@ class ScreenshotCandidateSummary(BaseModel):
 class ScreenshotCandidateResponse(BaseModel):
     status: str = "ready"
     candidates: ScreenshotCandidateSummary
+
+
+class CandidateReviewItem(BaseModel):
+    candidate_index: int
+    checkpoint_index: int
+    frame_index: int
+    timestamp_seconds: float
+    reason: str
+    source_change_kind: str
+    protected: bool
+    kept: bool
+    image_filename: str | None = None
+    duplicate_of_candidate_index: int | None = None
+    duplicate_hash_distance: int | None = None
+    duplicate_mean_abs_difference: float | None = None
+    edge_density: float
+    contrast_std: float
+    content_loss_risk: bool
+    content_loss_reason: str | None = None
+    auto_protected: bool
+    default_selected: bool
+    manual_decision: bool | None = None
+    selected: bool
+
+
+class TrustedScreenshotSummary(BaseModel):
+    video_id: str
+    status: str
+    candidate_count: int
+    selected_count: int
+    manual_keep_count: int
+    manual_suppress_count: int
+    auto_protected_count: int
+    restored_suppressed_count: int
+    candidates_generated_at: str
+    review_updated_at: str
+    generated_at: str
+
+
+class CandidateReviewResponse(BaseModel):
+    status: str = "ready"
+    summary: TrustedScreenshotSummary
+    candidates: list[CandidateReviewItem]
+
+
+class UpdateCandidateDecisionRequest(BaseModel):
+    selected: bool
+    force: bool = False
+
+
+class UpdateCandidateDecisionResponse(BaseModel):
+    status: str = "ready"
+    summary: TrustedScreenshotSummary
+    candidate: CandidateReviewItem
