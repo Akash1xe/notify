@@ -1,8 +1,8 @@
 # Notify — Lecture to PDF
 
-Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local processing copy, then builds a sequential frame timeline that later phases will use to detect meaningful teaching-state changes and ultimately generate visual PDF notes.
+Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local processing copy, analyzes every decoded frame transition, and identifies conservative stable teaching-state checkpoints for later screenshot extraction and PDF generation.
 
-> Current milestone: **Phase 2.1 complete — streaming video reader and frame timestamp timeline**.
+> Current milestone: **Phase 2.3 complete — stable teaching-state / writing-completion detection**.
 
 ## Current capabilities
 
@@ -29,30 +29,74 @@ Notify is a local-first lecture processing application. It accepts a YouTube lec
 - Ordered frame indexes from the beginning to the end of the prepared lecture
 - Per-frame timestamps with FPS-based fallback when container timestamps are unavailable
 - Monotonic timestamp protection
-- Background frame-analysis job with progress polling
-- Duplicate active frame-analysis job protection per video
-- Persisted frame timeline as JSON Lines
-- Persisted frame-timeline summary
-- Timeline cache invalidation if the prepared source file changes
-- Restart-aware analysis job recovery
-- Frontend `Start Frame Analysis` workflow and progress screen
-- Final timeline summary showing decoded frame count, FPS, dimensions, and last frame timestamp
+- Persisted frame timeline as JSON Lines plus a validated summary
+- Cache invalidation if the prepared source video changes
+- Background frame-analysis jobs, polling, duplicate-job protection, and restart recovery
+
+### Phase 2.2 — visual change detection
+
+- Every consecutive frame pair is inspected (`N` frames must produce exactly `N-1` comparisons)
+- Coverage fails closed if frames are missing, duplicated, reordered, or left uncompared
+- Changes are classified conservatively as:
+  - `NONE` — no meaningful visible change
+  - `LOCAL` — localized movement or new content
+  - `STRUCTURAL` — broader teaching-content modification
+  - `SCENE` — large slide/board/screen transition
+- Visual signatures use downscaled color and edge information
+- Metrics include changed-pixel ratio, edge-change ratio, changed-region area, mean pixel delta, and composite change score
+- Color-only changes are retained instead of relying only on grayscale comparison
+- `LOCAL` changes are intentionally **not discarded**, because cursor movement, a hand, and a newly written character can look similar from one frame pair alone
+- Persisted full visual-change map and summary
+
+### Phase 2.3 — stable teaching-state detection
+
+- Streams the persisted visual-change map instead of decoding the video a third time
+- Groups continuous writing/drawing activity into temporal segments
+- Default normal checkpoint requires approximately **1.25 seconds of visual stability**
+- Does not create a screenshot candidate for every written character or pen stroke
+- Protects a shorter completed pause before a strong transition using a conservative pre-transition checkpoint
+- Preserves unfinished final content with an end-of-video fallback checkpoint
+- Verifies the entire visual transition sequence remains contiguous and timestamp ordered
+- Persists checkpoint references by frame index and timestamp; images are not extracted yet
+- Checkpoint reasons include:
+  - `INITIAL_STABLE`
+  - `STABLE_AFTER_CHANGE`
+  - `PRE_TRANSITION_PROTECTION`
+  - `END_OF_VIDEO_FALLBACK`
+  - `SINGLE_FRAME`
+- Background state-detection jobs support progress polling, reuse, failure handling, and restart recovery
+
+## Important behavior
+
+Suppose a teacher writes continuously:
+
+```text
+m
+mi
+mid
+mid =
+mid = low
+mid = low + ...
+```
+
+Notify does **not** treat each intermediate character as a screenshot. The visual changes remain pending while writing continues. Once the completed screen remains visually stable for the configured stability interval, Notify records a stable checkpoint referencing that frame.
+
+If useful content is visible only briefly and a strong slide/board/replacement transition follows, Notify can preserve the previous frame through `PRE_TRANSITION_PROTECTION`. This is currently a conservative transition heuristic, not semantic understanding of erasing.
 
 ## Not implemented yet
 
-Phase 2.1 deliberately does **not** decide which frames are educationally important. The following are still future phases:
+The current stage finds **checkpoint references**. The following are still future work:
 
-- visual-change detection
-- scene/slide transition detection
-- screenshot candidate selection
-- SSIM/perceptual hashing and duplicate screenshot removal
-- stable-writing detection
-- erase/content-protection detection
+- exact screenshot image extraction for teaching checkpoints
+- screenshot candidate quality selection
+- SSIM/perceptual hashing and near-duplicate screenshot removal
+- semantic distinction between cursor/hand motion and educational writing
+- stronger erase/content-loss verification
 - OCR
 - Whisper/transcripts
-- topic detection
+- topic detection and screenshot-topic mapping
 - semantic importance analysis
-- coverage verification
+- final coverage verification
 - PDF generation
 
 ## Stack
@@ -68,6 +112,7 @@ Phase 2.1 deliberately does **not** decide which frames are educationally import
 - Uvicorn
 - yt-dlp
 - OpenCV (`opencv-python-headless`)
+- NumPy
 - FFmpeg / ffprobe (system tools)
 
 ## Repository layout
@@ -76,17 +121,17 @@ Phase 2.1 deliberately does **not** decide which frames are educationally import
 notify/
 ├── frontend/               Next.js UI
 ├── backend/                FastAPI local processing service
-├── downloads/              Verified prepared videos + analysis data (ignored by Git)
+├── downloads/              Verified videos + persistent analysis (ignored by Git)
 ├── temp/                   Temporary job workspaces (ignored by Git)
 ├── output/                 Future generated PDFs (ignored by Git)
-├── .github/workflows/      CI for backend tests + frontend build
+├── .github/workflows/      Backend tests + frontend typecheck/build
 ├── .gitignore
 └── README.md
 ```
 
-### Runtime storage
+## Runtime storage
 
-A successfully prepared and frame-scanned lecture is retained as:
+A lecture that has completed Phase 2.3 is retained as:
 
 ```text
 downloads/<video_id>/
@@ -94,33 +139,43 @@ downloads/<video_id>/
 ├── metadata.json
 └── analysis/
     ├── frame-timeline.jsonl
-    └── frame-timeline-summary.json
+    ├── frame-timeline-summary.json
+    ├── frame-differences.jsonl
+    ├── frame-differences-summary.json
+    ├── teaching-states.jsonl
+    └── teaching-states-summary.json
 ```
 
 `frame-timeline.jsonl` contains one compact record per decoded frame:
 
 ```json
-{"frame_index": 0, "timestamp_seconds": 0.0}
-{"frame_index": 1, "timestamp_seconds": 0.033333}
+{"frame_index":0,"timestamp_seconds":0.0}
+{"frame_index":1,"timestamp_seconds":0.033333}
 ```
 
-The timeline intentionally stores timestamps rather than frame images. Later analysis phases can stream the lecture again and use these timestamps without creating thousands of image files unnecessarily.
+`frame-differences.jsonl` contains one record per consecutive frame pair and its visual metrics/classification.
 
-Preparation and analysis jobs use isolated workspaces under `temp/<job_id>/`. Final persistent data is only written after the relevant operation succeeds.
+`teaching-states.jsonl` contains only checkpoint references, for example conceptually:
+
+```json
+{"checkpoint_index":0,"frame_index":142,"timestamp_seconds":4.733333,"reason":"STABLE_AFTER_CHANGE","stability_seconds":1.266667,"protected_before_transition":false}
+```
+
+This architecture avoids creating thousands of image files during early analysis. The later screenshot-extraction stage will read only the referenced checkpoint frames.
+
+Preparation and analysis jobs use isolated workspaces under `temp/<job_id>/`. Persistent analysis files are finalized only after their respective operation succeeds.
 
 ## Requirements
 
-Install these locally:
+Install locally:
 
 - Node.js 20+ recommended
 - Python 3.11+ recommended
-- FFmpeg (must include both `ffmpeg` and `ffprobe`)
+- FFmpeg with both `ffmpeg` and `ffprobe`
 
-Python dependencies, including OpenCV, are installed through `backend/requirements.txt`.
+Python dependencies are installed through `backend/requirements.txt`.
 
 ### Windows FFmpeg
-
-Install FFmpeg using your preferred package manager, for example with winget if available:
 
 ```powershell
 winget install Gyan.FFmpeg
@@ -133,7 +188,7 @@ ffmpeg -version
 ffprobe -version
 ```
 
-The backend can still start and fetch YouTube metadata when FFmpeg is unavailable; only local media preparation is blocked.
+The backend can still start and fetch YouTube metadata if FFmpeg is unavailable; local media preparation requires it.
 
 ## Backend setup
 
@@ -145,11 +200,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Backend URL:
-
-```text
-http://localhost:8000
-```
+Backend URL: `http://localhost:8000`
 
 Health endpoint:
 
@@ -168,11 +219,7 @@ copy .env.example .env.local
 npm run dev
 ```
 
-Frontend URL:
-
-```text
-http://localhost:3000
-```
+Frontend URL: `http://localhost:3000`
 
 Default frontend environment:
 
@@ -187,30 +234,32 @@ Paste YouTube URL
         ↓
 Validate and fetch metadata
         ↓
-Preview title / thumbnail / duration
-        ↓
-Prepare Video
-        ↓
-Background download (720p-first)
-        ↓
-Merge / normalize media if needed
-        ↓
-Verify with ffprobe
-        ↓
-READY
+Prepare + verify local lecture.mp4
         ↓
 Start Frame Analysis
         ↓
-Sequentially decode lecture with OpenCV
+Decode every frame sequentially
         ↓
-Record every frame index + timestamp
+Persist complete frame timeline
         ↓
-Persist frame timeline
+Analyze Visual Changes
         ↓
-FRAME TIMELINE READY
+Compare every consecutive frame pair
+        ↓
+Persist NONE / LOCAL / STRUCTURAL / SCENE map
+        ↓
+Detect Stable Teaching States
+        ↓
+Group continuous activity and wait for stable states
+        ↓
+Protect short completed states before strong transitions
+        ↓
+Persist ordered checkpoint references
+        ↓
+STABLE TEACHING STATES READY
 ```
 
-If the same prepared video and matching timeline are submitted later, the backend verifies the retained artifacts and reuses them instead of repeating unnecessary work.
+Valid retained artifacts are reused instead of repeating unnecessary work. Dependency timestamps and source-file metadata are checked before cached analysis is accepted.
 
 ## Main API endpoints
 
@@ -218,21 +267,27 @@ If the same prepared video and matching timeline are submitted later, the backen
 |---|---|---|
 | GET | `/health` | Backend connectivity |
 | POST | `/api/video/validate` | Validate and normalize a YouTube URL |
-| POST | `/api/video/metadata` | Validate and return normalized metadata |
-| POST | `/api/video/prepare` | Create/reuse a local preparation job |
-| GET | `/api/video/{video_id}/status` | Check whether local media is prepared |
-| DELETE | `/api/video/{video_id}/local` | Remove a retained local copy and its analysis data |
-| GET | `/api/jobs/{job_id}` | Poll preparation state |
-| POST | `/api/analysis/start` | Start/reuse a frame-timeline analysis job |
-| GET | `/api/analysis/jobs/{job_id}` | Poll frame-analysis state |
-| GET | `/api/analysis/{video_id}/timeline` | Read the completed frame-timeline summary |
+| POST | `/api/video/metadata` | Return normalized video metadata |
+| POST | `/api/video/prepare` | Create/reuse local video preparation |
+| GET | `/api/video/{video_id}/status` | Check local prepared-video state |
+| DELETE | `/api/video/{video_id}/local` | Remove local video and analysis data |
+| GET | `/api/jobs/{job_id}` | Poll preparation job |
+| POST | `/api/analysis/start` | Start/reuse frame-timeline analysis |
+| GET | `/api/analysis/jobs/{job_id}` | Poll frame-timeline job |
+| GET | `/api/analysis/{video_id}/timeline` | Read frame-timeline summary |
+| POST | `/api/analysis/changes/start` | Start/reuse visual-change analysis |
+| GET | `/api/analysis/changes/jobs/{job_id}` | Poll visual-change job |
+| GET | `/api/analysis/{video_id}/changes` | Read visual-change summary |
+| POST | `/api/analysis/states/start` | Start/reuse stable teaching-state detection |
+| GET | `/api/analysis/states/jobs/{job_id}` | Poll teaching-state job |
+| GET | `/api/analysis/{video_id}/states` | Read teaching-state summary |
 | GET | `/api/storage/status` | Local storage usage |
 | POST | `/api/storage/cleanup` | Remove stale temporary data |
 | GET | `/api/system/status` | FFmpeg/filesystem capability check |
 
-## Processing states
+## Processing states and job types
 
-Jobs use centralized status values. Preparation uses:
+Relevant transient states include:
 
 ```text
 QUEUED
@@ -240,73 +295,41 @@ DOWNLOADING
 MERGING
 VERIFYING
 FINALIZING
+SCANNING_FRAMES
+COMPARING_FRAMES
+DETECTING_STATES
+```
+
+Terminal states:
+
+```text
 READY
 FAILED
 INTERRUPTED
 CANCELLED
 ```
 
-Frame-timeline analysis additionally uses:
-
-```text
-SCANNING_FRAMES
-```
-
-Jobs also carry a type:
+Job types:
 
 ```text
 PREPARATION
 FRAME_TIMELINE
+VISUAL_CHANGE
+TEACHING_STATE
 ```
 
-This allows recovery and API behavior to distinguish acquisition jobs from analysis jobs while preserving the same job infrastructure.
+## Verification
 
-## Recovery behavior
+GitHub Actions runs:
 
-- Completed prepared videos survive backend restarts because final media and manifests are stored in `downloads/`.
-- Completed frame timelines survive backend restarts under the video's `analysis/` directory.
-- A timeline is considered reusable only when its recorded source size and modification time still match `lecture.mp4`.
-- In-progress preparation jobs found after a restart are marked as preparation interruptions.
-- In-progress frame-timeline jobs found after a restart are marked as analysis interruptions.
-- Corrupt or incomplete final media is never trusted solely because a file exists.
-- Partial and stale temp workspaces can be removed with the cleanup endpoint/UI.
-- Active preparation and frame-analysis workspaces are protected from cleanup.
+- backend automated tests with Python 3.12 and FFmpeg
+- frontend TypeScript typecheck
+- Next.js production build
 
-## Phase boundary
-
-Video acquisition remains separate from video understanding:
-
-```text
-YouTube URL
-   ↓ Phase 1
-Verified local lecture.mp4
-   ↓ Phase 2.1
-Ordered frame timeline
-   ↓ Phase 2.2+
-Visual-change / teaching-state analysis
-```
-
-The frame-timeline implementation deliberately streams frames and discards each image after its timestamp is recorded. This keeps memory usage bounded even for long lectures.
-
-## Tests and CI
-
-Backend:
-
-```powershell
-cd backend
-pytest -q
-```
-
-Frontend:
-
-```powershell
-cd frontend
-npm run typecheck
-npm run build
-```
-
-GitHub Actions runs both backend tests (with FFmpeg installed) and the frontend typecheck/build on pushes to `main` and on pull requests.
+Phase 2.3 tests specifically cover continuous writing collapsing into a stable checkpoint, protection before a strong transition, end-of-video fallback, persisted checkpoint ordering/reuse, and full visual-transition coverage.
 
 ## Next milestone
 
-**Phase 2 — Sub-phase 2: Visual Change Detection / Frame Difference Engine** will compare streamed frames conservatively to identify regions/timestamps where meaningful screen content changes, without yet deciding final screenshots.
+**Phase 2.4 — Screenshot Candidate Extraction and Near-Duplicate Filtering**
+
+The next stage will resolve the stored teaching-state frame references back to exact images, preserve protected candidates, compare candidate screenshots for near-duplicates, and prepare a compact ordered screenshot set without silently dropping uncertain educational content.
