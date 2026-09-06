@@ -4,12 +4,13 @@ import json
 import os
 from typing import Callable, Iterator
 
+from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.models.job import utc_now_iso
 from app.services.frame_timeline_service import FrameTimelineService
 from app.services.prepared_video_service import PreparedVideoService
 from app.services.storage_service import StorageService
-from app.services.teaching_state_detector import TeachingCheckpoint, TeachingStateDetector, TeachingStateReason
+from app.services.teaching_state_detector import TeachingCheckpoint, TeachingStateConfig, TeachingStateDetector, TeachingStateReason
 from app.services.visual_change_service import VisualChangeService
 
 ProgressCallback = Callable[[float, str], None]
@@ -22,7 +23,7 @@ class TeachingStateService:
         self.prepared = prepared
         self.timeline = timeline
         self.changes = changes
-        self.detector = detector or TeachingStateDetector()
+        self.detector = detector or TeachingStateDetector(TeachingStateConfig(stable_seconds=settings.analysis_stable_seconds))
 
     def get_summary(self, video_id: str) -> dict | None:
         prepared = self.prepared.get_prepared_video(video_id)
@@ -40,6 +41,8 @@ class TeachingStateService:
         if summary.get("timeline_generated_at") != timeline.get("generated_at"):
             return None
         if summary.get("changes_generated_at") != changes.get("generated_at"):
+            return None
+        if summary.get("detector_config") != self.detector.config.to_dict():
             return None
         return summary
 
