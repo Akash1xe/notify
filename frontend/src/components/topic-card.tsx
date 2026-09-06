@@ -1,4 +1,9 @@
-import type { LectureTopic, LectureTopicSummary, VideoMetadata } from "@/types/api";
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { OcrCard } from "@/components/ocr-card";
+import { ApiError, api } from "@/lib/api";
+import type { AnalysisJobResponse, LectureTopic, LectureTopicSummary, OcrResultResponse, VideoMetadata } from "@/types/api";
 
 interface Props {
   video: VideoMetadata;
@@ -7,6 +12,8 @@ interface Props {
   onBackToTranscript: () => void;
   onChooseAnother: () => void;
 }
+
+type OcrStep = "IDLE" | "RUNNING" | "READY" | "ERROR";
 
 function formatTime(seconds: number) {
   const total = Math.max(0, Math.round(seconds));
@@ -21,7 +28,100 @@ function readableReason(reason: string) {
   return reason.toLowerCase().replaceAll("_", " ");
 }
 
+function readableError(error: unknown) {
+  if (error instanceof ApiError) return error.message;
+  return "Screenshot OCR enrichment failed unexpectedly.";
+}
+
 export function TopicCard({ video, summary, topics, onBackToTranscript, onChooseAnother }: Props) {
+  const [ocrStep, setOcrStep] = useState<OcrStep>("IDLE");
+  const [ocrJob, setOcrJob] = useState<AnalysisJobResponse | null>(null);
+  const [ocrResult, setOcrResult] = useState<OcrResultResponse | null>(null);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const generation = useRef(0);
+
+  useEffect(() => () => { generation.current += 1; }, []);
+
+  async function loadOcrResult() {
+    const result = await api.getOcrResult(video.video_id);
+    setOcrResult(result);
+    setOcrStep("READY");
+  }
+
+  async function pollOcrJob(jobId: string) {
+    const currentGeneration = ++generation.current;
+    let failures = 0;
+    while (currentGeneration === generation.current) {
+      try {
+        const current = await api.getOcrJob(jobId);
+        failures = 0;
+        setOcrJob(current);
+        if (current.status === "READY") {
+          await loadOcrResult();
+          return;
+        }
+        if (["FAILED", "INTERRUPTED", "CANCELLED"].includes(current.status)) {
+          setOcrError(current.error?.message ?? current.message);
+          setOcrStep("ERROR");
+          return;
+        }
+      } catch (error) {
+        failures += 1;
+        if (failures >= 3) {
+          setOcrError(readableError(error));
+          setOcrStep("ERROR");
+          return;
+        }
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1250));
+    }
+  }
+
+  async function startOcr() {
+    generation.current += 1;
+    setOcrStep("RUNNING");
+    setOcrJob(null);
+    setOcrResult(null);
+    setOcrError(null);
+    try {
+      const created = await api.startOcrEnrichment(video.video_id);
+      const initial: AnalysisJobResponse = {
+        job_id: created.job_id,
+        video_id: created.video_id,
+        job_type: "OCR_ENRICHMENT",
+        status: created.status,
+        progress: created.status === "READY" ? 100 : 0,
+        message: created.message,
+        error: null,
+      };
+      setOcrJob(initial);
+      if (created.status === "READY") {
+        await loadOcrResult();
+        return;
+      }
+      void pollOcrJob(created.job_id);
+    } catch (error) {
+      setOcrError(readableError(error));
+      setOcrStep("ERROR");
+    }
+  }
+
+  if (ocrStep === "READY" && ocrResult) {
+    return (
+      <OcrCard
+        video={video}
+        ocr={ocrResult.ocr}
+        content={ocrResult.content}
+        topics={ocrResult.topics}
+        onBackToTopics={() => setOcrStep("IDLE")}
+        onChooseAnother={onChooseAnother}
+      />
+    );
+  }
+
+  const ocrBusy = ocrStep === "RUNNING";
+  const progress = Math.max(0, Math.min(100, ocrJob?.progress ?? 0));
+
   return (
     <section className="rounded-2xl border border-fuchsia-900/60 bg-fuchsia-950/20 p-6">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-fuchsia-300">✓ Lecture sections ready</p>
@@ -37,6 +137,26 @@ export function TopicCard({ video, summary, topics, onBackToTranscript, onChoose
       <div className="mt-5 rounded-xl border border-fuchsia-900/50 bg-fuchsia-950/30 p-4 text-sm leading-6 text-fuchsia-100">
         Sections are detected locally from speech gaps, vocabulary shifts, transition phrases, and strong visual transitions. Topic boundaries are conservative: short sentence-level changes do not automatically become new sections.
       </div>
+
+      {ocrBusy && (
+        <div className="mt-5 rounded-xl border border-amber-900/60 bg-amber-950/20 p-4" aria-live="polite">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300">Reading screenshot content</p>
+              <p className="mt-2 text-sm text-amber-100">{ocrJob?.message ?? "Starting local OCR..."}</p>
+            </div>
+            <span className="text-sm font-semibold text-amber-200">{Math.round(progress)}%</span>
+          </div>
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
+            <div className="h-full rounded-full bg-amber-300 transition-all duration-300" style={{ width: `${progress}%` }} />
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">Tesseract runs locally. Empty or uncertain OCR never removes a trusted screenshot; equations, handwriting, diagrams, and code may still be visually important.</p>
+        </div>
+      )}
+
+      {ocrStep === "ERROR" && ocrError && (
+        <div className="mt-5 rounded-xl border border-red-900/60 bg-red-950/20 p-4 text-sm text-red-200" role="alert">{ocrError}</div>
+      )}
 
       <div className="mt-6 space-y-4">
         {topics.map((topic) => (
@@ -70,9 +190,11 @@ export function TopicCard({ video, summary, topics, onBackToTranscript, onChoose
       </div>
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-        <button type="button" disabled title="OCR and semantic enrichment come next" className="rounded-xl bg-slate-700 px-4 py-2.5 font-semibold text-slate-400 opacity-70">Enrich Screenshot Content — Next</button>
-        <button type="button" onClick={onBackToTranscript} className="rounded-xl border border-fuchsia-800 px-4 py-2.5 font-medium text-fuchsia-100 hover:border-fuchsia-600">Back to Transcript</button>
-        <button type="button" onClick={onChooseAnother} className="rounded-xl border border-slate-700 px-4 py-2.5 font-medium text-slate-200 hover:border-slate-500">Choose Another Video</button>
+        <button type="button" disabled={ocrBusy} onClick={() => void startOcr()} className="rounded-xl bg-amber-300 px-4 py-2.5 font-semibold text-amber-950 hover:bg-amber-200 disabled:opacity-60">
+          {ocrBusy ? "Reading Screenshot Text..." : ocrStep === "ERROR" ? "Retry OCR Enrichment" : "Enrich Screenshot Content"}
+        </button>
+        <button type="button" disabled={ocrBusy} onClick={onBackToTranscript} className="rounded-xl border border-fuchsia-800 px-4 py-2.5 font-medium text-fuchsia-100 hover:border-fuchsia-600 disabled:opacity-50">Back to Transcript</button>
+        <button type="button" disabled={ocrBusy} onClick={onChooseAnother} className="rounded-xl border border-slate-700 px-4 py-2.5 font-medium text-slate-200 hover:border-slate-500 disabled:opacity-50">Choose Another Video</button>
       </div>
     </section>
   );
