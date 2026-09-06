@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.core.errors import AppError, ErrorCode
-from app.models.job import JobRecord, JobStatus, utc_now_iso
+from app.models.job import JobRecord, JobStatus, JobType, utc_now_iso
 from app.utils.youtube_url import validate_video_id
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,15 @@ class StorageService:
 
     def video_manifest_path(self, video_id: str) -> Path:
         return self.video_dir(video_id) / "metadata.json"
+
+    def analysis_dir(self, video_id: str) -> Path:
+        return self._assert_within(self.video_dir(video_id) / "analysis", self.video_dir(video_id))
+
+    def frame_timeline_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "frame-timeline.jsonl"
+
+    def frame_timeline_summary_path(self, video_id: str) -> Path:
+        return self.analysis_dir(video_id) / "frame-timeline-summary.json"
 
     def job_dir(self, job_id: str) -> Path:
         self.validate_job_id(job_id)
@@ -116,6 +125,22 @@ class StorageService:
         except (OSError, json.JSONDecodeError):
             return None
 
+    def write_frame_timeline_summary(self, video_id: str, summary: dict[str, Any]) -> None:
+        self._atomic_json_write(self.frame_timeline_summary_path(video_id), summary)
+
+    def read_frame_timeline_summary(self, video_id: str) -> dict[str, Any] | None:
+        path = self.frame_timeline_summary_path(video_id)
+        if not path.exists():
+            return None
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if not isinstance(payload, dict) or payload.get("video_id") != video_id:
+                return None
+            return payload
+        except (OSError, json.JSONDecodeError):
+            return None
+
     def finalize_video(self, job_id: str, video_id: str, source: Path, metadata: dict[str, Any]) -> Path:
         source = self._assert_within(source, self.job_dir(job_id))
         final_dir = self.video_dir(video_id)
@@ -173,9 +198,14 @@ class StorageService:
             job = self.read_job(item.name)
             if job and job.status.transient:
                 job.status = JobStatus.INTERRUPTED
-                job.message = "This job was interrupted before completion."
-                job.error_code = ErrorCode.PREPARATION_INTERRUPTED
-                job.error_message = "Video preparation was interrupted. Retry the preparation."
+                if job.job_type == JobType.FRAME_TIMELINE:
+                    job.message = "Frame timeline analysis was interrupted before completion."
+                    job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
+                    job.error_message = "Frame analysis was interrupted. Start the analysis again."
+                else:
+                    job.message = "This job was interrupted before completion."
+                    job.error_code = ErrorCode.PREPARATION_INTERRUPTED
+                    job.error_message = "Video preparation was interrupted. Retry the preparation."
                 job.updated_at = utc_now_iso()
                 self.write_job(job)
                 self.cleanup_failed_job_media(job.job_id)
