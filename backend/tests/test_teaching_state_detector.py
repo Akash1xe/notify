@@ -36,7 +36,9 @@ def test_continuous_writing_waits_for_stability() -> None:
         TeachingStateReason.STABLE_AFTER_CHANGE,
     ]
     assert checkpoints[1].activity_pair_count_since_previous == 6
-    assert checkpoints[1].frame_index >= 18
+    # Frame 12 is the last changing frame. At 10 fps, frame 17 is the first
+    # frame that has accumulated the configured 0.5 seconds of stability.
+    assert checkpoints[1].frame_index == 17
 
 
 def test_short_pause_is_protected_before_scene_transition() -> None:
