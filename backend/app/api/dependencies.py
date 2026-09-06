@@ -1,6 +1,8 @@
 from fastapi import Request
 
 from app.services.candidate_review_service import CandidateReviewService
+from app.services.coverage_job_manager import CoverageJobManager
+from app.services.coverage_service import CoverageService
 from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
 from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
@@ -100,3 +102,11 @@ def ocr_service(request: Request) -> OcrService:
 
 def ocr_job_manager(request: Request) -> OcrJobManager:
     return request.app.state.ocr_jobs
+
+
+def coverage_service(request: Request) -> CoverageService:
+    return request.app.state.coverage
+
+
+def coverage_job_manager(request: Request) -> CoverageJobManager:
+    return request.app.state.coverage_jobs
