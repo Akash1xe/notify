@@ -120,3 +120,33 @@ class MediaService:
             subprocess.run(transcode_command, capture_output=True, text=True, check=True, timeout=None)
         except (subprocess.SubprocessError, OSError) as exc:
             raise AppError(ErrorCode.MEDIA_MERGE_FAILED, "FFmpeg could not prepare the video.", 500) from exc
+
+    def extract_transcription_audio(self, source: Path, destination: Path) -> None:
+        self.require_tools()
+        if not source.exists() or source.stat().st_size <= 0:
+            raise AppError(ErrorCode.VIDEO_NOT_PREPARED, "The prepared lecture is missing.", 409)
+        probe = self.probe(source)
+        if not probe.has_audio:
+            raise AppError(ErrorCode.AUDIO_EXTRACTION_FAILED, "The prepared lecture does not contain an audio stream to transcribe.", 422)
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temp_destination = destination.with_suffix(destination.suffix + ".tmp.wav")
+        temp_destination.unlink(missing_ok=True)
+        command = [
+            self.ffmpeg_path or "ffmpeg",
+            "-y",
+            "-i", str(source),
+            "-vn",
+            "-ac", "1",
+            "-ar", "16000",
+            "-c:a", "pcm_s16le",
+            str(temp_destination),
+        ]
+        try:
+            subprocess.run(command, capture_output=True, text=True, check=True, timeout=None)
+            if not temp_destination.exists() or temp_destination.stat().st_size <= 44:
+                raise OSError("empty extracted audio")
+            temp_destination.replace(destination)
+        except (subprocess.SubprocessError, OSError) as exc:
+            temp_destination.unlink(missing_ok=True)
+            raise AppError(ErrorCode.AUDIO_EXTRACTION_FAILED, "FFmpeg could not extract lecture audio for transcription.", 500) from exc
