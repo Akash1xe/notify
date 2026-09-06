@@ -15,6 +15,8 @@ from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
 from app.services.prepared_video_service import PreparedVideoService
+from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJobManager
+from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.storage_service import StorageService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
@@ -59,6 +61,12 @@ async def lifespan(app: FastAPI):
         changes=visual_changes,
     )
     teaching_state_jobs = TeachingStateJobManager(storage=storage, states=teaching_states)
+    screenshot_candidates = ScreenshotCandidateService(
+        storage=storage,
+        prepared=prepared,
+        states=teaching_states,
+    )
+    screenshot_candidate_jobs = ScreenshotCandidateJobManager(storage=storage, candidates=screenshot_candidates)
 
     app.state.storage = storage
     app.state.media = media
@@ -72,6 +80,8 @@ async def lifespan(app: FastAPI):
     app.state.visual_change_jobs = visual_change_jobs
     app.state.teaching_states = teaching_states
     app.state.teaching_state_jobs = teaching_state_jobs
+    app.state.screenshot_candidates = screenshot_candidates
+    app.state.screenshot_candidate_jobs = screenshot_candidate_jobs
 
     logger.info(
         "Notify backend ready. ffmpeg=%s ffprobe=%s recovered_jobs=%s",
@@ -80,7 +90,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="0.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
