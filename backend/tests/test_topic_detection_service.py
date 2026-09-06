@@ -117,3 +117,24 @@ def test_trusted_set_change_invalidates_topics_without_touching_transcript(tmp_p
     review.generated_at = "trusted-v2"
     assert service.get_result(video_id) is None
     assert transcription.transcript_generated_at == "transcript-v1"
+
+
+def test_first_topic_includes_trusted_visual_before_first_spoken_segment(tmp_path) -> None:
+    storage = StorageService(tmp_path / "downloads", tmp_path / "temp", tmp_path / "output")
+    storage.initialize()
+    service = TopicDetectionService(storage, FakeTranscription(), FakeReview())
+
+    segments = [
+        {"segment_index": 0, "start_seconds": 5.0, "end_seconds": 15.0, "text": "Binary search introduction starts here."},
+        {"segment_index": 1, "start_seconds": 17.0, "end_seconds": 28.0, "text": "We define the low and high search boundaries."},
+    ]
+    trusted = [
+        {"trusted_index": 0, "candidate_index": 0, "frame_index": 10, "timestamp_seconds": 1.0},
+        {"trusted_index": 1, "candidate_index": 1, "frame_index": 200, "timestamp_seconds": 20.0},
+    ]
+
+    topics = service._build_topics(segments, trusted, [], 30.0)
+
+    assert topics[0]["start_seconds"] == 1.0
+    assert topics[0]["trusted_screenshot_indexes"] == [0, 1]
+    assert topics[0]["screenshot_count"] == 2
