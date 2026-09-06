@@ -53,6 +53,18 @@ class StartScreenshotCandidateAnalysisResponse(BaseModel):
     message: str
 
 
+class StartTranscriptionRequest(BaseModel):
+    video_id: str
+
+
+class StartTranscriptionResponse(BaseModel):
+    job_id: str
+    video_id: str
+    status: JobStatus
+    reused_existing: bool
+    message: str
+
+
 class AnalysisJobError(BaseModel):
     code: str
     message: str
@@ -207,3 +219,36 @@ class UpdateCandidateDecisionResponse(BaseModel):
     status: str = "ready"
     summary: TrustedScreenshotSummary
     candidate: CandidateReviewItem
+
+
+class TranscriptSummary(BaseModel):
+    video_id: str
+    status: str
+    model_name: str
+    requested_language: str
+    detected_language: str
+    language_probability: float
+    duration_seconds: float
+    segment_count: int
+    word_count: int
+    audio_sample_rate_hz: int
+    generated_at: str
+
+
+class ScreenshotTranscriptAlignmentSummary(BaseModel):
+    video_id: str
+    status: str
+    trusted_screenshot_count: int
+    aligned_screenshot_count: int
+    unaligned_screenshot_count: int
+    context_before_seconds: float
+    context_after_seconds: float
+    transcript_generated_at: str
+    trusted_generated_at: str
+    generated_at: str
+
+
+class TranscriptResultResponse(BaseModel):
+    status: str = "ready"
+    transcript: TranscriptSummary
+    alignment: ScreenshotTranscriptAlignmentSummary
