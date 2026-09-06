@@ -5,12 +5,12 @@ import type { VisualChangeSummary, VideoMetadata } from "@/types/api";
 type Props = {
   video: VideoMetadata;
   changes: VisualChangeSummary;
+  detectingStates: boolean;
   onDetectStates: () => void;
-  onReset: () => void;
-  disabled?: boolean;
+  onChooseAnother: () => void;
 };
 
-export function VisualChangeCard({ video, changes, onDetectStates, onReset, disabled = false }: Props) {
+export function VisualChangeCard({ video, changes, detectingStates, onDetectStates, onChooseAnother }: Props) {
   return (
     <section className="panel stack-lg">
       <div>
@@ -51,10 +51,10 @@ export function VisualChangeCard({ video, changes, onDetectStates, onReset, disa
       </p>
 
       <div className="actions">
-        <button className="primary-button" onClick={onDetectStates} disabled={disabled}>
-          {disabled ? "Starting..." : "Detect Stable Teaching States"}
+        <button className="primary-button" onClick={onDetectStates} disabled={detectingStates}>
+          {detectingStates ? "Starting..." : "Detect Stable Teaching States"}
         </button>
-        <button className="secondary-button" onClick={onReset}>Choose Another Video</button>
+        <button className="secondary-button" onClick={onChooseAnother}>Choose Another Video</button>
       </div>
     </section>
   );
