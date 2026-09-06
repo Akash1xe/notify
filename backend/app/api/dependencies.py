@@ -5,6 +5,8 @@ from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
 from app.services.media_service import MediaService
 from app.services.prepared_video_service import PreparedVideoService
+from app.services.screenshot_candidate_job_manager import ScreenshotCandidateJobManager
+from app.services.screenshot_candidate_service import ScreenshotCandidateService
 from app.services.storage_service import StorageService
 from app.services.teaching_state_job_manager import TeachingStateJobManager
 from app.services.teaching_state_service import TeachingStateService
@@ -55,3 +57,11 @@ def teaching_state_service(request: Request) -> TeachingStateService:
 
 def teaching_state_job_manager(request: Request) -> TeachingStateJobManager:
     return request.app.state.teaching_state_jobs
+
+
+def screenshot_candidate_service(request: Request) -> ScreenshotCandidateService:
+    return request.app.state.screenshot_candidates
+
+
+def screenshot_candidate_job_manager(request: Request) -> ScreenshotCandidateJobManager:
+    return request.app.state.screenshot_candidate_jobs
