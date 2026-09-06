@@ -1,8 +1,8 @@
 # Notify — Lecture to PDF
 
-Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local processing copy, analyzes every decoded frame transition, and identifies conservative stable teaching-state checkpoints for later screenshot extraction and PDF generation.
+Notify is a local-first lecture processing application. It accepts a YouTube lecture URL, prepares and verifies a local processing copy, analyzes every decoded frame transition, detects stable teaching-state checkpoints, extracts the referenced images, and conservatively removes only clear near-duplicate screenshot candidates.
 
-> Current milestone: **Phase 2.3 complete — stable teaching-state / writing-completion detection**.
+> Current milestone: **Phase 2.4 complete — screenshot candidate extraction + conservative near-duplicate filtering**.
 
 ## Current capabilities
 
@@ -37,34 +37,41 @@ Notify is a local-first lecture processing application. It accepts a YouTube lec
 
 - Every consecutive frame pair is inspected (`N` frames must produce exactly `N-1` comparisons)
 - Coverage fails closed if frames are missing, duplicated, reordered, or left uncompared
-- Changes are classified conservatively as:
-  - `NONE` — no meaningful visible change
-  - `LOCAL` — localized movement or new content
-  - `STRUCTURAL` — broader teaching-content modification
-  - `SCENE` — large slide/board/screen transition
+- Changes are classified conservatively as `NONE`, `LOCAL`, `STRUCTURAL`, or `SCENE`
 - Visual signatures use downscaled color and edge information
 - Metrics include changed-pixel ratio, edge-change ratio, changed-region area, mean pixel delta, and composite change score
 - Color-only changes are retained instead of relying only on grayscale comparison
-- `LOCAL` changes are intentionally **not discarded**, because cursor movement, a hand, and a newly written character can look similar from one frame pair alone
+- `LOCAL` changes are intentionally not discarded because cursor/hand movement and newly written characters can look similar from one frame pair alone
 - Persisted full visual-change map and summary
 
 ### Phase 2.3 — stable teaching-state detection
 
-- Streams the persisted visual-change map instead of decoding the video a third time
+- Streams the persisted visual-change map instead of decoding the video again
 - Groups continuous writing/drawing activity into temporal segments
 - Default normal checkpoint requires approximately **1.25 seconds of visual stability**
 - Does not create a screenshot candidate for every written character or pen stroke
 - Protects a shorter completed pause before a strong transition using a conservative pre-transition checkpoint
 - Preserves unfinished final content with an end-of-video fallback checkpoint
 - Verifies the entire visual transition sequence remains contiguous and timestamp ordered
-- Persists checkpoint references by frame index and timestamp; images are not extracted yet
-- Checkpoint reasons include:
-  - `INITIAL_STABLE`
-  - `STABLE_AFTER_CHANGE`
-  - `PRE_TRANSITION_PROTECTION`
-  - `END_OF_VIDEO_FALLBACK`
-  - `SINGLE_FRAME`
+- Persists checkpoint references by frame index and timestamp
+- Checkpoint reasons include `INITIAL_STABLE`, `STABLE_AFTER_CHANGE`, `PRE_TRANSITION_PROTECTION`, `END_OF_VIDEO_FALLBACK`, and `SINGLE_FRAME`
 - Background state-detection jobs support progress polling, reuse, failure handling, and restart recovery
+
+### Phase 2.4 — screenshot candidate extraction + near-duplicate filtering
+
+- Reads the ordered teaching-state checkpoint file and validates checkpoint indexes, frame order, timestamps, and count
+- Sequentially decodes the prepared lecture once and extracts only referenced checkpoint frames
+- Saves retained screenshots as high-quality JPEG files (default quality 92)
+- Produces a manifest entry for **every** checkpoint, including duplicate-suppressed checkpoints
+- Uses two independent signals before calling an unprotected screenshot a near-duplicate:
+  - difference-hash (dHash) Hamming distance
+  - mean absolute grayscale thumbnail difference
+- Compares against a small recent window instead of the entire lecture, reducing over-aggressive matching across distant sections
+- Keeps filtering intentionally conservative so newly written lines or diagrams are not removed just because most of the board is unchanged
+- Never automatically removes protected checkpoints such as pre-transition preservation, end-of-video fallback, or single-frame fallback
+- Persists source/dependency timestamps and prepared-video file metadata for cache invalidation
+- Background extraction jobs support polling, reuse, failure handling, duplicate active-job protection, and restart recovery
+- Frontend shows checkpoints considered, screenshots retained, near-duplicates removed, and protected screenshots retained
 
 ## Important behavior
 
@@ -79,19 +86,20 @@ mid = low
 mid = low + ...
 ```
 
-Notify does **not** treat each intermediate character as a screenshot. The visual changes remain pending while writing continues. Once the completed screen remains visually stable for the configured stability interval, Notify records a stable checkpoint referencing that frame.
+Notify first waits for a stable teaching state instead of taking a screenshot at every character. Phase 2.4 then resolves that stable checkpoint to the exact video frame and saves the image.
 
-If useful content is visible only briefly and a strong slide/board/replacement transition follows, Notify can preserve the previous frame through `PRE_TRANSITION_PROTECTION`. This is currently a conservative transition heuristic, not semantic understanding of erasing.
+If two checkpoint images are effectively the same, Notify can suppress the later unprotected one. A match must satisfy both the configured perceptual-hash threshold and a very small pixel-distance threshold. This intentionally favors **keeping uncertain educational content** over aggressive storage reduction.
+
+If a checkpoint was preserved because content was about to disappear, it is always retained even if it resembles another screenshot.
 
 ## Not implemented yet
 
-The current stage finds **checkpoint references**. The following are still future work:
+The pipeline now has real screenshot files and an auditable candidate manifest. Future work still includes:
 
-- exact screenshot image extraction for teaching checkpoints
-- screenshot candidate quality selection
-- SSIM/perceptual hashing and near-duplicate screenshot removal
-- semantic distinction between cursor/hand motion and educational writing
-- stronger erase/content-loss verification
+- candidate preview/review UI with manual restore/remove controls
+- stronger erase/content-loss verification across retained and suppressed candidates
+- wider duplicate analysis using SSIM/semantic information where useful
+- screenshot quality/ranking when several nearby frames are possible
 - OCR
 - Whisper/transcripts
 - topic detection and screenshot-topic mapping
@@ -131,7 +139,7 @@ notify/
 
 ## Runtime storage
 
-A lecture that has completed Phase 2.3 is retained as:
+A lecture that has completed Phase 2.4 is retained as:
 
 ```text
 downloads/<video_id>/
@@ -143,27 +151,38 @@ downloads/<video_id>/
     ├── frame-differences.jsonl
     ├── frame-differences-summary.json
     ├── teaching-states.jsonl
-    └── teaching-states-summary.json
+    ├── teaching-states-summary.json
+    ├── screenshot-candidates.jsonl
+    ├── screenshot-candidates-summary.json
+    └── screenshots/
+        ├── candidate-000000.jpg
+        ├── candidate-000002.jpg
+        └── ...
 ```
 
-`frame-timeline.jsonl` contains one compact record per decoded frame:
+Image indexes may contain gaps because `screenshot-candidates.jsonl` records every original checkpoint while only retained candidates receive image files.
+
+A candidate manifest entry is conceptually:
 
 ```json
-{"frame_index":0,"timestamp_seconds":0.0}
-{"frame_index":1,"timestamp_seconds":0.033333}
+{
+  "candidate_index": 4,
+  "checkpoint_index": 4,
+  "frame_index": 812,
+  "timestamp_seconds": 27.066667,
+  "reason": "STABLE_AFTER_CHANGE",
+  "protected": false,
+  "kept": false,
+  "image_filename": null,
+  "duplicate_of_candidate_index": 3,
+  "duplicate_hash_distance": 1,
+  "duplicate_mean_abs_difference": 0.82
+}
 ```
 
-`frame-differences.jsonl` contains one record per consecutive frame pair and its visual metrics/classification.
+Because rejected candidates remain in the manifest, later coverage/review logic can reason about or restore them instead of losing their provenance.
 
-`teaching-states.jsonl` contains only checkpoint references, for example conceptually:
-
-```json
-{"checkpoint_index":0,"frame_index":142,"timestamp_seconds":4.733333,"reason":"STABLE_AFTER_CHANGE","stability_seconds":1.266667,"protected_before_transition":false}
-```
-
-This architecture avoids creating thousands of image files during early analysis. The later screenshot-extraction stage will read only the referenced checkpoint frames.
-
-Preparation and analysis jobs use isolated workspaces under `temp/<job_id>/`. Persistent analysis files are finalized only after their respective operation succeeds.
+Preparation and analysis jobs use isolated workspaces under `temp/<job_id>/`. Persistent summaries are accepted only when their source video and upstream analysis dependency metadata still match.
 
 ## Requirements
 
@@ -188,8 +207,6 @@ ffmpeg -version
 ffprobe -version
 ```
 
-The backend can still start and fetch YouTube metadata if FFmpeg is unavailable; local media preparation requires it.
-
 ## Backend setup
 
 ```powershell
@@ -201,14 +218,6 @@ uvicorn app.main:app --reload
 ```
 
 Backend URL: `http://localhost:8000`
-
-Health endpoint:
-
-```text
-GET http://localhost:8000/health
-```
-
-Optional backend environment variables are documented in `backend/.env.example`.
 
 ## Frontend setup
 
@@ -236,30 +245,28 @@ Validate and fetch metadata
         ↓
 Prepare + verify local lecture.mp4
         ↓
-Start Frame Analysis
-        ↓
-Decode every frame sequentially
-        ↓
-Persist complete frame timeline
-        ↓
-Analyze Visual Changes
+Build complete frame timeline
         ↓
 Compare every consecutive frame pair
         ↓
-Persist NONE / LOCAL / STRUCTURAL / SCENE map
+Persist visual-change map
         ↓
-Detect Stable Teaching States
-        ↓
-Group continuous activity and wait for stable states
+Detect stable teaching states
         ↓
 Protect short completed states before strong transitions
         ↓
 Persist ordered checkpoint references
         ↓
-STABLE TEACHING STATES READY
+Extract Screenshot Candidates
+        ↓
+Decode lecture sequentially and save referenced frames
+        ↓
+Conservatively suppress clear unprotected near-duplicates
+        ↓
+Persist complete candidate manifest + retained JPEGs
+        ↓
+SCREENSHOT CANDIDATES READY
 ```
-
-Valid retained artifacts are reused instead of repeating unnecessary work. Dependency timestamps and source-file metadata are checked before cached analysis is accepted.
 
 ## Main API endpoints
 
@@ -281,6 +288,9 @@ Valid retained artifacts are reused instead of repeating unnecessary work. Depen
 | POST | `/api/analysis/states/start` | Start/reuse stable teaching-state detection |
 | GET | `/api/analysis/states/jobs/{job_id}` | Poll teaching-state job |
 | GET | `/api/analysis/{video_id}/states` | Read teaching-state summary |
+| POST | `/api/analysis/candidates/start` | Start/reuse screenshot candidate extraction |
+| GET | `/api/analysis/candidates/jobs/{job_id}` | Poll screenshot candidate job |
+| GET | `/api/analysis/{video_id}/candidates` | Read screenshot candidate summary |
 | GET | `/api/storage/status` | Local storage usage |
 | POST | `/api/storage/cleanup` | Remove stale temporary data |
 | GET | `/api/system/status` | FFmpeg/filesystem capability check |
@@ -298,6 +308,7 @@ FINALIZING
 SCANNING_FRAMES
 COMPARING_FRAMES
 DETECTING_STATES
+EXTRACTING_SCREENSHOTS
 ```
 
 Terminal states:
@@ -316,6 +327,7 @@ PREPARATION
 FRAME_TIMELINE
 VISUAL_CHANGE
 TEACHING_STATE
+SCREENSHOT_CANDIDATE
 ```
 
 ## Verification
@@ -326,10 +338,10 @@ GitHub Actions runs:
 - frontend TypeScript typecheck
 - Next.js production build
 
-Phase 2.3 tests specifically cover continuous writing collapsing into a stable checkpoint, protection before a strong transition, end-of-video fallback, persisted checkpoint ordering/reuse, and full visual-transition coverage.
+Phase 2.4 adds tests for exact duplicate matching, small visual/encoding noise, preserving meaningful new written content, and finding a repeated recent slide without relying on hash similarity alone.
 
 ## Next milestone
 
-**Phase 2.4 — Screenshot Candidate Extraction and Near-Duplicate Filtering**
+**Phase 2.5 — Candidate Review + Content Protection Hardening**
 
-The next stage will resolve the stored teaching-state frame references back to exact images, preserve protected candidates, compare candidate screenshots for near-duplicates, and prepare a compact ordered screenshot set without silently dropping uncertain educational content.
+The next stage should expose the retained/suppressed candidate set for review, strengthen before/after transition protection, allow safe restoration of suppressed frames, and prepare a trusted ordered screenshot set for the later topic/coverage/PDF stages.
