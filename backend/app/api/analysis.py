@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends
 from app.api.dependencies import (
     frame_analysis_job_manager,
     frame_timeline_service,
+    teaching_state_job_manager,
+    teaching_state_service,
     visual_change_job_manager,
     visual_change_service,
 )
@@ -16,13 +18,19 @@ from app.schemas.analysis import (
     FrameTimelineSummary,
     StartFrameAnalysisRequest,
     StartFrameAnalysisResponse,
+    StartTeachingStateAnalysisRequest,
+    StartTeachingStateAnalysisResponse,
     StartVisualChangeAnalysisRequest,
     StartVisualChangeAnalysisResponse,
+    TeachingStateResponse,
+    TeachingStateSummary,
     VisualChangeResponse,
     VisualChangeSummary,
 )
 from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
 from app.services.frame_timeline_service import FrameTimelineService
+from app.services.teaching_state_job_manager import TeachingStateJobManager
+from app.services.teaching_state_service import TeachingStateService
 from app.services.visual_change_job_manager import VisualChangeJobManager
 from app.services.visual_change_service import VisualChangeService
 from app.utils.youtube_url import validate_video_id
@@ -96,6 +104,30 @@ def visual_change_job_status(
     return _job_response(jobs.get(job_id))
 
 
+@router.post("/states/start", response_model=StartTeachingStateAnalysisResponse)
+def start_teaching_state_analysis(
+    payload: StartTeachingStateAnalysisRequest,
+    jobs: TeachingStateJobManager = Depends(teaching_state_job_manager),
+) -> StartTeachingStateAnalysisResponse:
+    validate_video_id(payload.video_id)
+    job, reused = jobs.start(payload.video_id)
+    return StartTeachingStateAnalysisResponse(
+        job_id=job.job_id,
+        video_id=job.video_id,
+        status=job.status,
+        reused_existing=reused,
+        message=job.message,
+    )
+
+
+@router.get("/states/jobs/{job_id}", response_model=AnalysisJobResponse)
+def teaching_state_job_status(
+    job_id: str,
+    jobs: TeachingStateJobManager = Depends(teaching_state_job_manager),
+) -> AnalysisJobResponse:
+    return _job_response(jobs.get(job_id))
+
+
 @router.get("/{video_id}/timeline", response_model=FrameTimelineResponse)
 def frame_timeline(
     video_id: str,
@@ -118,3 +150,15 @@ def visual_changes(
     if not summary:
         raise AppError(ErrorCode.CHANGE_ANALYSIS_NOT_FOUND, "Visual change analysis has not been generated for this lecture yet.", 404)
     return VisualChangeResponse(changes=VisualChangeSummary.model_validate(summary))
+
+
+@router.get("/{video_id}/states", response_model=TeachingStateResponse)
+def teaching_states(
+    video_id: str,
+    states: TeachingStateService = Depends(teaching_state_service),
+) -> TeachingStateResponse:
+    validate_video_id(video_id)
+    summary = states.get_summary(video_id)
+    if not summary:
+        raise AppError(ErrorCode.TEACHING_STATES_NOT_FOUND, "Stable teaching-state analysis has not been generated for this lecture yet.", 404)
+    return TeachingStateResponse(states=TeachingStateSummary.model_validate(summary))
