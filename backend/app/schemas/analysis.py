@@ -29,6 +29,18 @@ class StartVisualChangeAnalysisResponse(BaseModel):
     message: str
 
 
+class StartTeachingStateAnalysisRequest(BaseModel):
+    video_id: str
+
+
+class StartTeachingStateAnalysisResponse(BaseModel):
+    job_id: str
+    video_id: str
+    status: JobStatus
+    reused_existing: bool
+    message: str
+
+
 class AnalysisJobError(BaseModel):
     code: str
     message: str
@@ -85,3 +97,27 @@ class VisualChangeSummary(BaseModel):
 class VisualChangeResponse(BaseModel):
     status: str = "ready"
     changes: VisualChangeSummary
+
+
+class TeachingStateSummary(BaseModel):
+    video_id: str
+    status: str
+    checkpoint_count: int
+    initial_stable_count: int
+    stable_after_change_count: int
+    pre_transition_protection_count: int
+    end_of_video_fallback_count: int
+    single_frame_count: int
+    first_checkpoint_timestamp_seconds: float
+    last_checkpoint_timestamp_seconds: float
+    coverage_complete: bool
+    source_pair_count: int
+    detector_config: dict[str, float]
+    generated_at: str
+    timeline_generated_at: str
+    changes_generated_at: str
+
+
+class TeachingStateResponse(BaseModel):
+    status: str = "ready"
+    states: TeachingStateSummary
