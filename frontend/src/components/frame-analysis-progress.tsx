@@ -1,7 +1,12 @@
 import type { AnalysisJobResponse } from "@/types/api";
 
 export function FrameAnalysisProgress({ job }: { job: AnalysisJobResponse }) {
-  const title = job.job_type === "VISUAL_CHANGE" ? "Comparing visual changes" : "Building frame timeline";
+  const title =
+    job.job_type === "TEACHING_STATE"
+      ? "Detecting stable teaching states"
+      : job.job_type === "VISUAL_CHANGE"
+        ? "Comparing visual changes"
+        : "Building frame timeline";
 
   return (
     <section className="rounded-2xl border border-blue-900/60 bg-blue-950/20 p-6" aria-live="polite">
