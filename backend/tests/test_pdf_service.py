@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 
 from app.core.errors import AppError, ErrorCode
+from app.models.job import JobRecord, JobStatus, JobType, utc_now_iso
+from app.services.pdf_job_manager import PdfGenerationJobManager
 from app.services.pdf_service import PdfService
 from app.services.storage_service import StorageService
 
@@ -76,13 +78,18 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
             handle.write(json.dumps(record) + "\n")
 
 
-def build_service(tmp_path: Path, ready: bool = True) -> PdfService:
+def build_storage(tmp_path: Path) -> StorageService:
     storage = StorageService(
         downloads_dir=tmp_path / "downloads",
         temp_dir=tmp_path / "temp",
         output_dir=tmp_path / "output",
     )
     storage.initialize()
+    return storage
+
+
+def build_service(tmp_path: Path, ready: bool = True) -> PdfService:
+    storage = build_storage(tmp_path)
     storage.write_video_manifest(
         VIDEO_ID,
         {
@@ -182,3 +189,29 @@ def test_same_review_order_does_not_invalidate_pdf(tmp_path: Path) -> None:
     assert before is not None
     service.update_review(VIDEO_ID, [0, 1, 2])
     assert service.get_result(VIDEO_ID) is not None
+
+
+def test_recovered_pdf_job_gets_pdf_specific_interruption_message(tmp_path: Path) -> None:
+    storage = build_storage(tmp_path)
+    now = utc_now_iso()
+    job = JobRecord(
+        job_id="job_" + "a" * 32,
+        video_id=VIDEO_ID,
+        status=JobStatus.INTERRUPTED,
+        progress=35.0,
+        message="This job was interrupted before completion.",
+        created_at=now,
+        updated_at=now,
+        job_type=JobType.PDF_GENERATION,
+        error_code=ErrorCode.PREPARATION_INTERRUPTED,
+        error_message="Video preparation was interrupted. Retry the preparation.",
+    )
+    storage.create_job_workspace(job.job_id)
+    storage.write_job(job)
+
+    manager = PdfGenerationJobManager(storage=storage, pdf=object())  # type: ignore[arg-type]
+    recovered = manager.get(job.job_id)
+
+    assert recovered.status == JobStatus.INTERRUPTED
+    assert recovered.error_code == ErrorCode.ANALYSIS_INTERRUPTED
+    assert "PDF generation was interrupted" in recovered.error_message

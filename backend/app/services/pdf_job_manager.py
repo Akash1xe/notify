@@ -115,6 +115,22 @@ class PdfGenerationJobManager:
                 if self._active_by_video.get(job.video_id) == job_id:
                     self._active_by_video.pop(job.video_id, None)
 
+    def _normalize_recovered_job(self, job: JobRecord) -> JobRecord:
+        # Storage recovery is shared with video preparation. Older/generic recovery
+        # may mark an interrupted PDF job with PREPARATION_INTERRUPTED; correct the
+        # persisted message the first time this job is read after restart.
+        if (
+            job.job_type == JobType.PDF_GENERATION
+            and job.status == JobStatus.INTERRUPTED
+            and job.error_code == ErrorCode.PREPARATION_INTERRUPTED
+        ):
+            job.message = "PDF generation was interrupted before completion."
+            job.error_code = ErrorCode.ANALYSIS_INTERRUPTED
+            job.error_message = "PDF generation was interrupted. Generate the PDF again."
+            job.updated_at = utc_now_iso()
+            self.storage.write_job(job)
+        return job
+
     def get(self, job_id: str) -> JobRecord:
         self.storage.validate_job_id(job_id)
         with self._lock:
@@ -123,5 +139,5 @@ class PdfGenerationJobManager:
             return job
         persisted = self.storage.read_job(job_id)
         if persisted and persisted.job_type == JobType.PDF_GENERATION:
-            return persisted
+            return self._normalize_recovered_job(persisted)
         raise AppError(ErrorCode.JOB_NOT_FOUND, "The requested PDF-generation job was not found.", 404)
