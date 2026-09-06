@@ -17,6 +17,8 @@ from app.services.media_service import MediaService
 from app.services.prepared_video_service import PreparedVideoService
 from app.services.storage_service import StorageService
 from app.services.video_download_service import VideoDownloadService
+from app.services.visual_change_job_manager import VisualChangeJobManager
+from app.services.visual_change_service import VisualChangeService
 from app.services.youtube_service import YoutubeService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,6 +48,8 @@ async def lifespan(app: FastAPI):
     jobs = JobManager(storage=storage, youtube=youtube, downloader=downloader, prepared=prepared)
     frame_timeline = FrameTimelineService(storage=storage, prepared=prepared)
     analysis_jobs = FrameAnalysisJobManager(storage=storage, timeline=frame_timeline)
+    visual_changes = VisualChangeService(storage=storage, prepared=prepared, timeline=frame_timeline)
+    visual_change_jobs = VisualChangeJobManager(storage=storage, changes=visual_changes)
 
     app.state.storage = storage
     app.state.media = media
@@ -55,6 +59,8 @@ async def lifespan(app: FastAPI):
     app.state.jobs = jobs
     app.state.frame_timeline = frame_timeline
     app.state.analysis_jobs = analysis_jobs
+    app.state.visual_changes = visual_changes
+    app.state.visual_change_jobs = visual_change_jobs
 
     logger.info(
         "Notify backend ready. ffmpeg=%s ffprobe=%s recovered_jobs=%s",
