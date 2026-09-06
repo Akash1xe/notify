@@ -5,9 +5,9 @@ import type { FrameTimelineSummary, VideoMetadata } from "@/types/api";
 type Props = {
   video: VideoMetadata;
   timeline: FrameTimelineSummary;
+  analyzingChanges: boolean;
   onAnalyzeChanges: () => void;
-  onReset: () => void;
-  disabled?: boolean;
+  onChooseAnother: () => void;
 };
 
 function formatDuration(seconds: number) {
@@ -16,7 +16,7 @@ function formatDuration(seconds: number) {
   return `${minutes}m ${remaining}s`;
 }
 
-export function FrameTimelineCard({ video, timeline, onAnalyzeChanges, onReset, disabled = false }: Props) {
+export function FrameTimelineCard({ video, timeline, analyzingChanges, onAnalyzeChanges, onChooseAnother }: Props) {
   return (
     <section className="panel stack-lg">
       <div>
@@ -40,10 +40,10 @@ export function FrameTimelineCard({ video, timeline, onAnalyzeChanges, onReset, 
       </div>
 
       <div className="actions">
-        <button className="primary-button" onClick={onAnalyzeChanges} disabled={disabled}>
-          {disabled ? "Starting..." : "Run Adaptive Visual Scan"}
+        <button className="primary-button" onClick={onAnalyzeChanges} disabled={analyzingChanges}>
+          {analyzingChanges ? "Starting..." : "Run Adaptive Visual Scan"}
         </button>
-        <button className="secondary-button" onClick={onReset}>Choose Another Video</button>
+        <button className="secondary-button" onClick={onChooseAnother}>Choose Another Video</button>
       </div>
     </section>
   );
