@@ -61,15 +61,21 @@ async def lifespan(app: FastAPI):
         min_free_space_bytes=settings.min_free_space_bytes,
     )
     jobs = JobManager(storage=storage, youtube=youtube, downloader=downloader, prepared=prepared)
+
+    # Visual stages are adaptive: source metadata only, coarse whole-video scan,
+    # fine activity-window scan, then teaching checkpoints and direct screenshot seeks.
     frame_timeline = FrameTimelineService(storage=storage, prepared=prepared)
     analysis_jobs = FrameAnalysisJobManager(storage=storage, timeline=frame_timeline)
     visual_changes = VisualChangeService(storage=storage, prepared=prepared, timeline=frame_timeline)
-    visual_change_jobs = VisualChangeJobManager(storage=storage, changes=visual_changes)
     teaching_states = TeachingStateService(storage=storage, prepared=prepared, timeline=frame_timeline, changes=visual_changes)
     teaching_state_jobs = TeachingStateJobManager(storage=storage, states=teaching_states)
     screenshot_candidates = ScreenshotCandidateService(storage=storage, prepared=prepared, states=teaching_states)
     screenshot_candidate_jobs = ScreenshotCandidateJobManager(storage=storage, candidates=screenshot_candidates)
     candidate_review = CandidateReviewService(storage=storage, prepared=prepared, candidates=screenshot_candidates)
+
+    # Raw Whisper transcription is source-video cached and can be prewarmed while
+    # adaptive visual scanning runs. Screenshot alignment remains dependent on the
+    # trusted screenshot set and is rebuilt later when required.
     transcription = TranscriptionService(
         storage=storage,
         prepared=prepared,
@@ -80,7 +86,9 @@ async def lifespan(app: FastAPI):
         device=settings.whisper_device,
         compute_type=settings.whisper_compute_type,
     )
+    visual_change_jobs = VisualChangeJobManager(storage=storage, changes=visual_changes, transcription=transcription)
     transcription_jobs = TranscriptionJobManager(storage=storage, transcription=transcription)
+
     topic_detection = TopicDetectionService(storage=storage, transcription=transcription, review=candidate_review)
     topic_detection_jobs = TopicDetectionJobManager(storage=storage, topics=topic_detection)
     ocr = OcrService(
@@ -100,12 +108,7 @@ async def lifespan(app: FastAPI):
         visual_changes=visual_changes,
     )
     coverage_jobs = CoverageJobManager(storage=storage, coverage=coverage)
-    pdf = PdfService(
-        storage=storage,
-        coverage=coverage,
-        review=candidate_review,
-        topics=topic_detection,
-    )
+    pdf = PdfService(storage=storage, coverage=coverage, review=candidate_review, topics=topic_detection)
     pdf_jobs = PdfGenerationJobManager(storage=storage, pdf=pdf)
 
     app.state.storage = storage
@@ -135,17 +138,19 @@ async def lifespan(app: FastAPI):
     app.state.pdf_jobs = pdf_jobs
 
     logger.info(
-        "Notify backend ready. ffmpeg=%s ffprobe=%s whisper_model=%s tesseract=%s recovered_jobs=%s",
+        "Notify backend ready. ffmpeg=%s ffprobe=%s whisper_model=%s tesseract=%s adaptive=%sfps/%sfps recovered_jobs=%s",
         bool(media.ffmpeg_path),
         bool(media.ffprobe_path),
         settings.whisper_model,
         ocr.available,
+        settings.analysis_coarse_fps,
+        settings.analysis_fine_fps,
         recovered,
     )
     yield
 
 
-app = FastAPI(title="Notify Local Processing Service", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Notify Local Processing Service", version="1.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
