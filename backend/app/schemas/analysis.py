@@ -17,6 +17,18 @@ class StartFrameAnalysisResponse(BaseModel):
     message: str
 
 
+class StartVisualChangeAnalysisRequest(BaseModel):
+    video_id: str
+
+
+class StartVisualChangeAnalysisResponse(BaseModel):
+    job_id: str
+    video_id: str
+    status: JobStatus
+    reused_existing: bool
+    message: str
+
+
 class AnalysisJobError(BaseModel):
     code: str
     message: str
@@ -48,3 +60,28 @@ class FrameTimelineSummary(BaseModel):
 class FrameTimelineResponse(BaseModel):
     status: str = "ready"
     timeline: FrameTimelineSummary
+
+
+class VisualChangeSummary(BaseModel):
+    video_id: str
+    status: str
+    compared_frame_count: int
+    compared_pair_count: int
+    no_change_count: int
+    local_change_count: int
+    structural_change_count: int
+    scene_change_count: int
+    change_pair_count: int
+    average_change_score: float
+    max_change_score: float
+    max_change_frame_index: int | None
+    coverage_complete: bool
+    compared_every_consecutive_pair: bool
+    detector_config: dict[str, float | int]
+    generated_at: str
+    timeline_generated_at: str
+
+
+class VisualChangeResponse(BaseModel):
+    status: str = "ready"
+    changes: VisualChangeSummary
