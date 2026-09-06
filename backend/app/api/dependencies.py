@@ -1,5 +1,6 @@
 from fastapi import Request
 
+from app.services.candidate_review_service import CandidateReviewService
 from app.services.frame_analysis_job_manager import FrameAnalysisJobManager
 from app.services.frame_timeline_service import FrameTimelineService
 from app.services.job_manager import JobManager
@@ -65,3 +66,7 @@ def screenshot_candidate_service(request: Request) -> ScreenshotCandidateService
 
 def screenshot_candidate_job_manager(request: Request) -> ScreenshotCandidateJobManager:
     return request.app.state.screenshot_candidate_jobs
+
+
+def candidate_review_service(request: Request) -> CandidateReviewService:
+    return request.app.state.candidate_review
