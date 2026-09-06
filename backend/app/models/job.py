@@ -6,12 +6,18 @@ from enum import Enum
 from typing import Any
 
 
+class JobType(str, Enum):
+    PREPARATION = "PREPARATION"
+    FRAME_TIMELINE = "FRAME_TIMELINE"
+
+
 class JobStatus(str, Enum):
     QUEUED = "QUEUED"
     DOWNLOADING = "DOWNLOADING"
     MERGING = "MERGING"
     VERIFYING = "VERIFYING"
     FINALIZING = "FINALIZING"
+    SCANNING_FRAMES = "SCANNING_FRAMES"
     READY = "READY"
     FAILED = "FAILED"
     INTERRUPTED = "INTERRUPTED"
@@ -39,12 +45,14 @@ class JobRecord:
     message: str
     created_at: str
     updated_at: str
+    job_type: JobType = JobType.PREPARATION
     error_code: str | None = None
     error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["status"] = self.status.value
+        data["job_type"] = self.job_type.value
         return data
 
     @classmethod
@@ -57,6 +65,7 @@ class JobRecord:
             message=str(data.get("message", "")),
             created_at=str(data.get("created_at") or utc_now_iso()),
             updated_at=str(data.get("updated_at") or utc_now_iso()),
+            job_type=JobType(str(data.get("job_type") or JobType.PREPARATION.value)),
             error_code=data.get("error_code"),
             error_message=data.get("error_message"),
         )
